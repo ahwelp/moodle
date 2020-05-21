@@ -1,10 +1,27 @@
-Description of php-jwt library import into Moodle
+PHP-JWT
+=======
 
-Instructions
-------------
-1.  Visit [https://github.com/firebase/php-jwt].
-2.  Click on 'X releases'.
-3.  Download the latest release.
-4.  Unzip it in lib as php-jwt.
-5.  Update entry for this library in lib/thirdpartylibs.xml.
+This library contains the PHP-JWT package.
 
+
+Package Version
+----------------
+
+- firebase/php-jwt: 5.2.0
+
+
+Modifications
+-------------
+
+/lib.php
+
+    Include all the PHP-JWT package files. Every use of the PHP-JWT should
+    start by requiring this file:
+
+        require_once($CFG->libdir . '/php-jwt/lib.php');
+
+    And, from there, use the package normally. Everything will be autoloaded.
+
+/autoload.php
+
+    Custom autoload that loads all the package files.

@@ -23,7 +23,12 @@ lib/adodb/
 lib/bennu/
 lib/evalmath/
 lib/phpspreadsheet/
+lib/getallheaders/
 lib/google/
+lib/guzzle/
+lib/monolog/
+lib/symfony/
+lib/psr/
 lib/htmlpurifier/
 lib/jabber/
 lib/minify/matthiasmullie-minify/

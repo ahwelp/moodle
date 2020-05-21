@@ -1,6 +1,6 @@
 <?php
 /*
- * Copyright 2010 Google Inc.
+ * Copyright 2014 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -19,24 +19,24 @@
  * Service definition for Script (v1).
  *
  * <p>
- * An API for executing Google Apps Script projects.</p>
+ * Manages and executes Google Apps Script projects.</p>
  *
  * <p>
  * For more information about this service, see the API
- * <a href="https://developers.google.com/apps-script/execution/rest/v1/run" target="_blank">Documentation</a>
+ * <a href="https://developers.google.com/apps-script/api/" target="_blank">Documentation</a>
  * </p>
  *
  * @author Google, Inc.
  */
 class Google_Service_Script extends Google_Service
 {
-  /** View and manage your mail. */
+  /** Read, compose, send, and permanently delete all your email from Gmail. */
   const MAIL_GOOGLE_COM =
       "https://mail.google.com/";
-  /** Manage your calendars. */
+  /** See, edit, share, and permanently delete all the calendars you can access using Google Calendar. */
   const WWW_GOOGLE_COM_CALENDAR_FEEDS =
       "https://www.google.com/calendar/feeds";
-  /** Manage your contacts. */
+  /** See, edit, download, and permanently delete your contacts. */
   const WWW_GOOGLE_COM_M8_FEEDS =
       "https://www.google.com/m8/feeds";
   /** View and manage the provisioning of groups on your domain. */
@@ -45,7 +45,10 @@ class Google_Service_Script extends Google_Service
   /** View and manage the provisioning of users on your domain. */
   const ADMIN_DIRECTORY_USER =
       "https://www.googleapis.com/auth/admin.directory.user";
-  /** View and manage the files in your Google Drive. */
+  /** View and manage your Google Docs documents. */
+  const DOCUMENTS =
+      "https://www.googleapis.com/auth/documents";
+  /** See, edit, create, and delete all of your Google Drive files. */
   const DRIVE =
       "https://www.googleapis.com/auth/drive";
   /** View and manage your forms in Google Drive. */
@@ -57,27 +60,365 @@ class Google_Service_Script extends Google_Service
   /** View and manage your Google Groups. */
   const GROUPS =
       "https://www.googleapis.com/auth/groups";
+  /** Create and update Google Apps Script deployments. */
+  const SCRIPT_DEPLOYMENTS =
+      "https://www.googleapis.com/auth/script.deployments";
+  /** View Google Apps Script deployments. */
+  const SCRIPT_DEPLOYMENTS_READONLY =
+      "https://www.googleapis.com/auth/script.deployments.readonly";
+  /** View Google Apps Script project's metrics. */
+  const SCRIPT_METRICS =
+      "https://www.googleapis.com/auth/script.metrics";
+  /** View Google Apps Script processes. */
+  const SCRIPT_PROCESSES =
+      "https://www.googleapis.com/auth/script.processes";
+  /** Create and update Google Apps Script projects. */
+  const SCRIPT_PROJECTS =
+      "https://www.googleapis.com/auth/script.projects";
+  /** View Google Apps Script projects. */
+  const SCRIPT_PROJECTS_READONLY =
+      "https://www.googleapis.com/auth/script.projects.readonly";
+  /** See, edit, create, and delete your spreadsheets in Google Drive. */
+  const SPREADSHEETS =
+      "https://www.googleapis.com/auth/spreadsheets";
   /** View your email address. */
   const USERINFO_EMAIL =
       "https://www.googleapis.com/auth/userinfo.email";
 
+  public $processes;
+  public $projects;
+  public $projects_deployments;
+  public $projects_versions;
   public $scripts;
   
-
   /**
    * Constructs the internal representation of the Script service.
    *
-   * @param Google_Client $client
+   * @param Google_Client $client The client used to deliver requests.
+   * @param string $rootUrl The root URL used for requests to the service.
    */
-  public function __construct(Google_Client $client)
+  public function __construct(Google_Client $client, $rootUrl = null)
   {
     parent::__construct($client);
-    $this->rootUrl = 'https://script.googleapis.com/';
+    $this->rootUrl = $rootUrl ?: 'https://script.googleapis.com/';
     $this->servicePath = '';
+    $this->batchPath = 'batch';
     $this->version = 'v1';
     $this->serviceName = 'script';
 
-    $this->scripts = new Google_Service_Script_Scripts_Resource(
+    $this->processes = new Google_Service_Script_Resource_Processes(
+        $this,
+        $this->serviceName,
+        'processes',
+        array(
+          'methods' => array(
+            'list' => array(
+              'path' => 'v1/processes',
+              'httpMethod' => 'GET',
+              'parameters' => array(
+                'userProcessFilter.startTime' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'userProcessFilter.projectName' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'userProcessFilter.userAccessLevels' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                  'repeated' => true,
+                ),
+                'userProcessFilter.functionName' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'userProcessFilter.scriptId' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'userProcessFilter.types' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                  'repeated' => true,
+                ),
+                'userProcessFilter.statuses' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                  'repeated' => true,
+                ),
+                'userProcessFilter.deploymentId' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'pageToken' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'userProcessFilter.endTime' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'pageSize' => array(
+                  'location' => 'query',
+                  'type' => 'integer',
+                ),
+              ),
+            ),'listScriptProcesses' => array(
+              'path' => 'v1/processes:listScriptProcesses',
+              'httpMethod' => 'GET',
+              'parameters' => array(
+                'pageToken' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'pageSize' => array(
+                  'location' => 'query',
+                  'type' => 'integer',
+                ),
+                'scriptProcessFilter.endTime' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'scriptProcessFilter.userAccessLevels' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                  'repeated' => true,
+                ),
+                'scriptProcessFilter.statuses' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                  'repeated' => true,
+                ),
+                'scriptProcessFilter.functionName' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'scriptProcessFilter.startTime' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'scriptProcessFilter.deploymentId' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'scriptId' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'scriptProcessFilter.types' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                  'repeated' => true,
+                ),
+              ),
+            ),
+          )
+        )
+    );
+    $this->projects = new Google_Service_Script_Resource_Projects(
+        $this,
+        $this->serviceName,
+        'projects',
+        array(
+          'methods' => array(
+            'create' => array(
+              'path' => 'v1/projects',
+              'httpMethod' => 'POST',
+              'parameters' => array(),
+            ),'get' => array(
+              'path' => 'v1/projects/{scriptId}',
+              'httpMethod' => 'GET',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+              ),
+            ),'getContent' => array(
+              'path' => 'v1/projects/{scriptId}/content',
+              'httpMethod' => 'GET',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+                'versionNumber' => array(
+                  'location' => 'query',
+                  'type' => 'integer',
+                ),
+              ),
+            ),'getMetrics' => array(
+              'path' => 'v1/projects/{scriptId}/metrics',
+              'httpMethod' => 'GET',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+                'metricsFilter.deploymentId' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'metricsGranularity' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+              ),
+            ),'updateContent' => array(
+              'path' => 'v1/projects/{scriptId}/content',
+              'httpMethod' => 'PUT',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+              ),
+            ),
+          )
+        )
+    );
+    $this->projects_deployments = new Google_Service_Script_Resource_ProjectsDeployments(
+        $this,
+        $this->serviceName,
+        'deployments',
+        array(
+          'methods' => array(
+            'create' => array(
+              'path' => 'v1/projects/{scriptId}/deployments',
+              'httpMethod' => 'POST',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+              ),
+            ),'delete' => array(
+              'path' => 'v1/projects/{scriptId}/deployments/{deploymentId}',
+              'httpMethod' => 'DELETE',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+                'deploymentId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+              ),
+            ),'get' => array(
+              'path' => 'v1/projects/{scriptId}/deployments/{deploymentId}',
+              'httpMethod' => 'GET',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+                'deploymentId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+              ),
+            ),'list' => array(
+              'path' => 'v1/projects/{scriptId}/deployments',
+              'httpMethod' => 'GET',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+                'pageToken' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'pageSize' => array(
+                  'location' => 'query',
+                  'type' => 'integer',
+                ),
+              ),
+            ),'update' => array(
+              'path' => 'v1/projects/{scriptId}/deployments/{deploymentId}',
+              'httpMethod' => 'PUT',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+                'deploymentId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+              ),
+            ),
+          )
+        )
+    );
+    $this->projects_versions = new Google_Service_Script_Resource_ProjectsVersions(
+        $this,
+        $this->serviceName,
+        'versions',
+        array(
+          'methods' => array(
+            'create' => array(
+              'path' => 'v1/projects/{scriptId}/versions',
+              'httpMethod' => 'POST',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+              ),
+            ),'get' => array(
+              'path' => 'v1/projects/{scriptId}/versions/{versionNumber}',
+              'httpMethod' => 'GET',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+                'versionNumber' => array(
+                  'location' => 'path',
+                  'type' => 'integer',
+                  'required' => true,
+                ),
+              ),
+            ),'list' => array(
+              'path' => 'v1/projects/{scriptId}/versions',
+              'httpMethod' => 'GET',
+              'parameters' => array(
+                'scriptId' => array(
+                  'location' => 'path',
+                  'type' => 'string',
+                  'required' => true,
+                ),
+                'pageToken' => array(
+                  'location' => 'query',
+                  'type' => 'string',
+                ),
+                'pageSize' => array(
+                  'location' => 'query',
+                  'type' => 'integer',
+                ),
+              ),
+            ),
+          )
+        )
+    );
+    $this->scripts = new Google_Service_Script_Resource_Scripts(
         $this,
         $this->serviceName,
         'scripts',
@@ -98,271 +439,4 @@ class Google_Service_Script extends Google_Service
         )
     );
   }
-}
-
-
-/**
- * The "scripts" collection of methods.
- * Typical usage is:
- *  <code>
- *   $scriptService = new Google_Service_Script(...);
- *   $scripts = $scriptService->scripts;
- *  </code>
- */
-class Google_Service_Script_Scripts_Resource extends Google_Service_Resource
-{
-
-  /**
-   * Runs a function in an Apps Script project that has been deployed for use with
-   * the Apps Script Execution API. This method requires authorization with an
-   * OAuth 2.0 token that includes at least one of the scopes listed in the
-   * [Authentication](#authentication) section; script projects that do not
-   * require authorization cannot be executed through this API. To find the
-   * correct scopes to include in the authentication token, open the project in
-   * the script editor, then select **File > Project properties** and click the
-   * **Scopes** tab. (scripts.run)
-   *
-   * @param string $scriptId The project key of the script to be executed. To find
-   * the project key, open the project in the script editor, then select **File >
-   * Project properties**.
-   * @param Google_ExecutionRequest $postBody
-   * @param array $optParams Optional parameters.
-   * @return Google_Service_Script_Operation
-   */
-  public function run($scriptId, Google_Service_Script_ExecutionRequest $postBody, $optParams = array())
-  {
-    $params = array('scriptId' => $scriptId, 'postBody' => $postBody);
-    $params = array_merge($params, $optParams);
-    return $this->call('run', array($params), "Google_Service_Script_Operation");
-  }
-}
-
-
-
-
-class Google_Service_Script_ExecutionError extends Google_Collection
-{
-  protected $collection_key = 'scriptStackTraceElements';
-  protected $internal_gapi_mappings = array(
-  );
-  public $errorMessage;
-  public $errorType;
-  protected $scriptStackTraceElementsType = 'Google_Service_Script_ScriptStackTraceElement';
-  protected $scriptStackTraceElementsDataType = 'array';
-
-
-  public function setErrorMessage($errorMessage)
-  {
-    $this->errorMessage = $errorMessage;
-  }
-  public function getErrorMessage()
-  {
-    return $this->errorMessage;
-  }
-  public function setErrorType($errorType)
-  {
-    $this->errorType = $errorType;
-  }
-  public function getErrorType()
-  {
-    return $this->errorType;
-  }
-  public function setScriptStackTraceElements($scriptStackTraceElements)
-  {
-    $this->scriptStackTraceElements = $scriptStackTraceElements;
-  }
-  public function getScriptStackTraceElements()
-  {
-    return $this->scriptStackTraceElements;
-  }
-}
-
-class Google_Service_Script_ExecutionRequest extends Google_Collection
-{
-  protected $collection_key = 'parameters';
-  protected $internal_gapi_mappings = array(
-  );
-  public $devMode;
-  public $function;
-  public $parameters;
-  public $sessionState;
-
-
-  public function setDevMode($devMode)
-  {
-    $this->devMode = $devMode;
-  }
-  public function getDevMode()
-  {
-    return $this->devMode;
-  }
-  public function setFunction($function)
-  {
-    $this->function = $function;
-  }
-  public function getFunction()
-  {
-    return $this->function;
-  }
-  public function setParameters($parameters)
-  {
-    $this->parameters = $parameters;
-  }
-  public function getParameters()
-  {
-    return $this->parameters;
-  }
-  public function setSessionState($sessionState)
-  {
-    $this->sessionState = $sessionState;
-  }
-  public function getSessionState()
-  {
-    return $this->sessionState;
-  }
-}
-
-class Google_Service_Script_ExecutionResponse extends Google_Model
-{
-  protected $internal_gapi_mappings = array(
-  );
-  public $result;
-
-
-  public function setResult($result)
-  {
-    $this->result = $result;
-  }
-  public function getResult()
-  {
-    return $this->result;
-  }
-}
-
-class Google_Service_Script_Operation extends Google_Model
-{
-  protected $internal_gapi_mappings = array(
-  );
-  public $done;
-  protected $errorType = 'Google_Service_Script_Status';
-  protected $errorDataType = '';
-  public $metadata;
-  public $name;
-  public $response;
-
-
-  public function setDone($done)
-  {
-    $this->done = $done;
-  }
-  public function getDone()
-  {
-    return $this->done;
-  }
-  public function setError(Google_Service_Script_Status $error)
-  {
-    $this->error = $error;
-  }
-  public function getError()
-  {
-    return $this->error;
-  }
-  public function setMetadata($metadata)
-  {
-    $this->metadata = $metadata;
-  }
-  public function getMetadata()
-  {
-    return $this->metadata;
-  }
-  public function setName($name)
-  {
-    $this->name = $name;
-  }
-  public function getName()
-  {
-    return $this->name;
-  }
-  public function setResponse($response)
-  {
-    $this->response = $response;
-  }
-  public function getResponse()
-  {
-    return $this->response;
-  }
-}
-
-class Google_Service_Script_OperationMetadata extends Google_Model
-{
-}
-
-class Google_Service_Script_OperationResponse extends Google_Model
-{
-}
-
-class Google_Service_Script_ScriptStackTraceElement extends Google_Model
-{
-  protected $internal_gapi_mappings = array(
-  );
-  public $function;
-  public $lineNumber;
-
-
-  public function setFunction($function)
-  {
-    $this->function = $function;
-  }
-  public function getFunction()
-  {
-    return $this->function;
-  }
-  public function setLineNumber($lineNumber)
-  {
-    $this->lineNumber = $lineNumber;
-  }
-  public function getLineNumber()
-  {
-    return $this->lineNumber;
-  }
-}
-
-class Google_Service_Script_Status extends Google_Collection
-{
-  protected $collection_key = 'details';
-  protected $internal_gapi_mappings = array(
-  );
-  public $code;
-  public $details;
-  public $message;
-
-
-  public function setCode($code)
-  {
-    $this->code = $code;
-  }
-  public function getCode()
-  {
-    return $this->code;
-  }
-  public function setDetails($details)
-  {
-    $this->details = $details;
-  }
-  public function getDetails()
-  {
-    return $this->details;
-  }
-  public function setMessage($message)
-  {
-    $this->message = $message;
-  }
-  public function getMessage()
-  {
-    return $this->message;
-  }
-}
-
-class Google_Service_Script_StatusDetails extends Google_Model
-{
 }

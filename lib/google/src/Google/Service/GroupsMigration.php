@@ -1,6 +1,6 @@
 <?php
 /*
- * Copyright 2010 Google Inc.
+ * Copyright 2014 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -36,21 +36,22 @@ class Google_Service_GroupsMigration extends Google_Service
 
   public $archive;
   
-
   /**
    * Constructs the internal representation of the GroupsMigration service.
    *
-   * @param Google_Client $client
+   * @param Google_Client $client The client used to deliver requests.
+   * @param string $rootUrl The root URL used for requests to the service.
    */
-  public function __construct(Google_Client $client)
+  public function __construct(Google_Client $client, $rootUrl = null)
   {
     parent::__construct($client);
-    $this->rootUrl = 'https://www.googleapis.com/';
+    $this->rootUrl = $rootUrl ?: 'https://www.googleapis.com/';
     $this->servicePath = 'groups/v1/groups/';
+    $this->batchPath = 'batch/groupsmigration/v1';
     $this->version = 'v1';
     $this->serviceName = 'groupsmigration';
 
-    $this->archive = new Google_Service_GroupsMigration_Archive_Resource(
+    $this->archive = new Google_Service_GroupsMigration_Resource_Archive(
         $this,
         $this->serviceName,
         'archive',
@@ -70,61 +71,5 @@ class Google_Service_GroupsMigration extends Google_Service
           )
         )
     );
-  }
-}
-
-
-/**
- * The "archive" collection of methods.
- * Typical usage is:
- *  <code>
- *   $groupsmigrationService = new Google_Service_GroupsMigration(...);
- *   $archive = $groupsmigrationService->archive;
- *  </code>
- */
-class Google_Service_GroupsMigration_Archive_Resource extends Google_Service_Resource
-{
-
-  /**
-   * Inserts a new mail into the archive of the Google group. (archive.insert)
-   *
-   * @param string $groupId The group ID
-   * @param array $optParams Optional parameters.
-   * @return Google_Service_GroupsMigration_Groups
-   */
-  public function insert($groupId, $optParams = array())
-  {
-    $params = array('groupId' => $groupId);
-    $params = array_merge($params, $optParams);
-    return $this->call('insert', array($params), "Google_Service_GroupsMigration_Groups");
-  }
-}
-
-
-
-
-class Google_Service_GroupsMigration_Groups extends Google_Model
-{
-  protected $internal_gapi_mappings = array(
-  );
-  public $kind;
-  public $responseCode;
-
-
-  public function setKind($kind)
-  {
-    $this->kind = $kind;
-  }
-  public function getKind()
-  {
-    return $this->kind;
-  }
-  public function setResponseCode($responseCode)
-  {
-    $this->responseCode = $responseCode;
-  }
-  public function getResponseCode()
-  {
-    return $this->responseCode;
   }
 }

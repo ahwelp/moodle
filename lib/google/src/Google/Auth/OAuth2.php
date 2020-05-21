@@ -1,6 +1,6 @@
 <?php
 /*
- * Copyright 2008 Google Inc.
+ * Copyright 2015 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,632 +15,1346 @@
  * limitations under the License.
  */
 
-if (!class_exists('Google_Client')) {
-  require_once dirname(__FILE__) . '/../autoload.php';
-}
+namespace Google\Auth;
+
+use Google\Auth\HttpHandler\HttpClientCache;
+use Google\Auth\HttpHandler\HttpHandlerFactory;
+use GuzzleHttp\Psr7;
+use GuzzleHttp\Psr7\Request;
+use InvalidArgumentException;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\UriInterface;
 
 /**
- * Authentication class that deals with the OAuth 2 web-server authentication flow
+ * OAuth2 supports authentication by OAuth2 2-legged flows.
  *
+ * It primary supports
+ * - service account authorization
+ * - authorization where a user already has an access token
  */
-class Google_Auth_OAuth2 extends Google_Auth_Abstract
+class OAuth2 implements FetchAuthTokenInterface
 {
-  const OAUTH2_REVOKE_URI = 'https://accounts.google.com/o/oauth2/revoke';
-  const OAUTH2_TOKEN_URI = 'https://accounts.google.com/o/oauth2/token';
-  const OAUTH2_AUTH_URL = 'https://accounts.google.com/o/oauth2/auth';
-  const CLOCK_SKEW_SECS = 300; // five minutes in seconds
-  const AUTH_TOKEN_LIFETIME_SECS = 300; // five minutes in seconds
-  const MAX_TOKEN_LIFETIME_SECS = 86400; // one day in seconds
-  const OAUTH2_ISSUER = 'accounts.google.com';
-  const OAUTH2_ISSUER_HTTPS = 'https://accounts.google.com';
+    const DEFAULT_EXPIRY_SECONDS = 3600; // 1 hour
+    const DEFAULT_SKEW_SECONDS = 60; // 1 minute
+    const JWT_URN = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
 
-  /** @var Google_Auth_AssertionCredentials $assertionCredentials */
-  private $assertionCredentials;
-
-  /**
-   * @var string The state parameters for CSRF and other forgery protection.
-   */
-  private $state;
-
-  /**
-   * @var array The token bundle.
-   */
-  private $token = array();
-
-  /**
-   * @var Google_Client the base client
-   */
-  private $client;
-
-  /**
-   * Instantiates the class, but does not initiate the login flow, leaving it
-   * to the discretion of the caller.
-   */
-  public function __construct(Google_Client $client)
-  {
-    $this->client = $client;
-  }
-
-  /**
-   * Perform an authenticated / signed apiHttpRequest.
-   * This function takes the apiHttpRequest, calls apiAuth->sign on it
-   * (which can modify the request in what ever way fits the auth mechanism)
-   * and then calls apiCurlIO::makeRequest on the signed request
-   *
-   * @param Google_Http_Request $request
-   * @return Google_Http_Request The resulting HTTP response including the
-   * responseHttpCode, responseHeaders and responseBody.
-   */
-  public function authenticatedRequest(Google_Http_Request $request)
-  {
-    $request = $this->sign($request);
-    return $this->client->getIo()->makeRequest($request);
-  }
-
-  /**
-   * @param string $code
-   * @param boolean $crossClient
-   * @throws Google_Auth_Exception
-   * @return string
-   */
-  public function authenticate($code, $crossClient = false)
-  {
-    if (strlen($code) == 0) {
-      throw new Google_Auth_Exception("Invalid code");
-    }
-
-    $arguments = array(
-          'code' => $code,
-          'grant_type' => 'authorization_code',
-          'client_id' => $this->client->getClassConfig($this, 'client_id'),
-          'client_secret' => $this->client->getClassConfig($this, 'client_secret')
+    /**
+     * TODO: determine known methods from the keys of JWT::methods.
+     */
+    public static $knownSigningAlgorithms = array(
+        'HS256',
+        'HS512',
+        'HS384',
+        'RS256',
     );
 
-    if ($crossClient !== true) {
-        $arguments['redirect_uri'] = $this->client->getClassConfig($this, 'redirect_uri');
+    /**
+     * The well known grant types.
+     *
+     * @var array
+     */
+    public static $knownGrantTypes = array(
+        'authorization_code',
+        'refresh_token',
+        'password',
+        'client_credentials',
+    );
+
+    /**
+     * - authorizationUri
+     *   The authorization server's HTTP endpoint capable of
+     *   authenticating the end-user and obtaining authorization.
+     *
+     * @var UriInterface
+     */
+    private $authorizationUri;
+
+    /**
+     * - tokenCredentialUri
+     *   The authorization server's HTTP endpoint capable of issuing
+     *   tokens and refreshing expired tokens.
+     *
+     * @var UriInterface
+     */
+    private $tokenCredentialUri;
+
+    /**
+     * The redirection URI used in the initial request.
+     *
+     * @var string
+     */
+    private $redirectUri;
+
+    /**
+     * A unique identifier issued to the client to identify itself to the
+     * authorization server.
+     *
+     * @var string
+     */
+    private $clientId;
+
+    /**
+     * A shared symmetric secret issued by the authorization server, which is
+     * used to authenticate the client.
+     *
+     * @var string
+     */
+    private $clientSecret;
+
+    /**
+     * The resource owner's username.
+     *
+     * @var string
+     */
+    private $username;
+
+    /**
+     * The resource owner's password.
+     *
+     * @var string
+     */
+    private $password;
+
+    /**
+     * The scope of the access request, expressed either as an Array or as a
+     * space-delimited string.
+     *
+     * @var string
+     */
+    private $scope;
+
+    /**
+     * An arbitrary string designed to allow the client to maintain state.
+     *
+     * @var string
+     */
+    private $state;
+
+    /**
+     * The authorization code issued to this client.
+     *
+     * Only used by the authorization code access grant type.
+     *
+     * @var string
+     */
+    private $code;
+
+    /**
+     * The issuer ID when using assertion profile.
+     *
+     * @var string
+     */
+    private $issuer;
+
+    /**
+     * The target audience for assertions.
+     *
+     * @var string
+     */
+    private $audience;
+
+    /**
+     * The target sub when issuing assertions.
+     *
+     * @var string
+     */
+    private $sub;
+
+    /**
+     * The number of seconds assertions are valid for.
+     *
+     * @var int
+     */
+    private $expiry;
+
+    /**
+     * The signing key when using assertion profile.
+     *
+     * @var string
+     */
+    private $signingKey;
+
+    /**
+     * The signing algorithm when using an assertion profile.
+     *
+     * @var string
+     */
+    private $signingAlgorithm;
+
+    /**
+     * The refresh token associated with the access token to be refreshed.
+     *
+     * @var string
+     */
+    private $refreshToken;
+
+    /**
+     * The current access token.
+     *
+     * @var string
+     */
+    private $accessToken;
+
+    /**
+     * The current ID token.
+     *
+     * @var string
+     */
+    private $idToken;
+
+    /**
+     * The lifetime in seconds of the current access token.
+     *
+     * @var int
+     */
+    private $expiresIn;
+
+    /**
+     * The expiration time of the access token as a number of seconds since the
+     * unix epoch.
+     *
+     * @var int
+     */
+    private $expiresAt;
+
+    /**
+     * The issue time of the access token as a number of seconds since the unix
+     * epoch.
+     *
+     * @var int
+     */
+    private $issuedAt;
+
+    /**
+     * The current grant type.
+     *
+     * @var string
+     */
+    private $grantType;
+
+    /**
+     * When using an extension grant type, this is the set of parameters used by
+     * that extension.
+     */
+    private $extensionParams;
+
+    /**
+     * When using the toJwt function, these claims will be added to the JWT
+     * payload.
+     */
+    private $additionalClaims;
+
+    /**
+     * Create a new OAuthCredentials.
+     *
+     * The configuration array accepts various options
+     *
+     * - authorizationUri
+     *   The authorization server's HTTP endpoint capable of
+     *   authenticating the end-user and obtaining authorization.
+     *
+     * - tokenCredentialUri
+     *   The authorization server's HTTP endpoint capable of issuing
+     *   tokens and refreshing expired tokens.
+     *
+     * - clientId
+     *   A unique identifier issued to the client to identify itself to the
+     *   authorization server.
+     *
+     * - clientSecret
+     *   A shared symmetric secret issued by the authorization server,
+     *   which is used to authenticate the client.
+     *
+     * - scope
+     *   The scope of the access request, expressed either as an Array
+     *   or as a space-delimited String.
+     *
+     * - state
+     *   An arbitrary string designed to allow the client to maintain state.
+     *
+     * - redirectUri
+     *   The redirection URI used in the initial request.
+     *
+     * - username
+     *   The resource owner's username.
+     *
+     * - password
+     *   The resource owner's password.
+     *
+     * - issuer
+     *   Issuer ID when using assertion profile
+     *
+     * - audience
+     *   Target audience for assertions
+     *
+     * - expiry
+     *   Number of seconds assertions are valid for
+     *
+     * - signingKey
+     *   Signing key when using assertion profile
+     *
+     * - refreshToken
+     *   The refresh token associated with the access token
+     *   to be refreshed.
+     *
+     * - accessToken
+     *   The current access token for this client.
+     *
+     * - idToken
+     *   The current ID token for this client.
+     *
+     * - extensionParams
+     *   When using an extension grant type, this is the set of parameters used
+     *   by that extension.
+     *
+     * @param array $config Configuration array
+     */
+    public function __construct(array $config)
+    {
+        $opts = array_merge([
+            'expiry' => self::DEFAULT_EXPIRY_SECONDS,
+            'extensionParams' => [],
+            'authorizationUri' => null,
+            'redirectUri' => null,
+            'tokenCredentialUri' => null,
+            'state' => null,
+            'username' => null,
+            'password' => null,
+            'clientId' => null,
+            'clientSecret' => null,
+            'issuer' => null,
+            'sub' => null,
+            'audience' => null,
+            'signingKey' => null,
+            'signingAlgorithm' => null,
+            'scope' => null,
+            'additionalClaims' => [],
+        ], $config);
+
+        $this->setAuthorizationUri($opts['authorizationUri']);
+        $this->setRedirectUri($opts['redirectUri']);
+        $this->setTokenCredentialUri($opts['tokenCredentialUri']);
+        $this->setState($opts['state']);
+        $this->setUsername($opts['username']);
+        $this->setPassword($opts['password']);
+        $this->setClientId($opts['clientId']);
+        $this->setClientSecret($opts['clientSecret']);
+        $this->setIssuer($opts['issuer']);
+        $this->setSub($opts['sub']);
+        $this->setExpiry($opts['expiry']);
+        $this->setAudience($opts['audience']);
+        $this->setSigningKey($opts['signingKey']);
+        $this->setSigningAlgorithm($opts['signingAlgorithm']);
+        $this->setScope($opts['scope']);
+        $this->setExtensionParams($opts['extensionParams']);
+        $this->setAdditionalClaims($opts['additionalClaims']);
+        $this->updateToken($opts);
     }
 
-    // We got here from the redirect from a successful authorization grant,
-    // fetch the access token
-    $request = new Google_Http_Request(
-        self::OAUTH2_TOKEN_URI,
-        'POST',
-        array(),
-        $arguments
-    );
-    $request->disableGzip();
-    $response = $this->client->getIo()->makeRequest($request);
-
-    if ($response->getResponseHttpCode() == 200) {
-      $this->setAccessToken($response->getResponseBody());
-      $this->token['created'] = time();
-      return $this->getAccessToken();
-    } else {
-      $decodedResponse = json_decode($response->getResponseBody(), true);
-      if ($decodedResponse != null && $decodedResponse['error']) {
-        $errorText = $decodedResponse['error'];
-        if (isset($decodedResponse['error_description'])) {
-          $errorText .= ": " . $decodedResponse['error_description'];
+    /**
+     * Verifies the idToken if present.
+     *
+     * - if none is present, return null
+     * - if present, but invalid, raises DomainException.
+     * - otherwise returns the payload in the idtoken as a PHP object.
+     *
+     * if $publicKey is null, the key is decoded without being verified.
+     *
+     * @param string $publicKey The public key to use to authenticate the token
+     * @param array $allowed_algs List of supported verification algorithms
+     *
+     * @return null|object
+     */
+    public function verifyIdToken($publicKey = null, $allowed_algs = array())
+    {
+        $idToken = $this->getIdToken();
+        if (is_null($idToken)) {
+            return null;
         }
-      }
-      throw new Google_Auth_Exception(
-          sprintf(
-              "Error fetching OAuth2 access token, message: '%s'",
-              $errorText
-          ),
-          $response->getResponseHttpCode()
-      );
-    }
-  }
 
-  /**
-   * Create a URL to obtain user authorization.
-   * The authorization endpoint allows the user to first
-   * authenticate, and then grant/deny the access request.
-   * @param string $scope The scope is expressed as a list of space-delimited strings.
-   * @return string
-   */
-  public function createAuthUrl($scope)
-  {
-    $params = array(
-        'response_type' => 'code',
-        'redirect_uri' => $this->client->getClassConfig($this, 'redirect_uri'),
-        'client_id' => $this->client->getClassConfig($this, 'client_id'),
-        'scope' => $scope,
-        'access_type' => $this->client->getClassConfig($this, 'access_type'),
-    );
-
-    // Prefer prompt to approval prompt.
-    if ($this->client->getClassConfig($this, 'prompt')) {
-      $params = $this->maybeAddParam($params, 'prompt');
-    } else {
-      $params = $this->maybeAddParam($params, 'approval_prompt');
-    }
-    $params = $this->maybeAddParam($params, 'login_hint');
-    $params = $this->maybeAddParam($params, 'hd');
-    $params = $this->maybeAddParam($params, 'openid.realm');
-    $params = $this->maybeAddParam($params, 'include_granted_scopes');
-
-    // If the list of scopes contains plus.login, add request_visible_actions
-    // to auth URL.
-    $rva = $this->client->getClassConfig($this, 'request_visible_actions');
-    if (strpos($scope, 'plus.login') && strlen($rva) > 0) {
-        $params['request_visible_actions'] = $rva;
-    }
-
-    if (isset($this->state)) {
-      $params['state'] = $this->state;
-    }
-
-    return self::OAUTH2_AUTH_URL . "?" . http_build_query($params, '', '&');
-  }
-
-  /**
-   * @param string $token
-   * @throws Google_Auth_Exception
-   */
-  public function setAccessToken($token)
-  {
-    $token = json_decode($token, true);
-    if ($token == null) {
-      throw new Google_Auth_Exception('Could not json decode the token');
-    }
-    if (! isset($token['access_token'])) {
-      throw new Google_Auth_Exception("Invalid token format");
-    }
-    $this->token = $token;
-  }
-
-  public function getAccessToken()
-  {
-    return json_encode($this->token);
-  }
-
-  public function getRefreshToken()
-  {
-    if (array_key_exists('refresh_token', $this->token)) {
-      return $this->token['refresh_token'];
-    } else {
-      return null;
-    }
-  }
-
-  public function setState($state)
-  {
-    $this->state = $state;
-  }
-
-  public function setAssertionCredentials(Google_Auth_AssertionCredentials $creds)
-  {
-    $this->assertionCredentials = $creds;
-  }
-
-  /**
-   * Include an accessToken in a given apiHttpRequest.
-   * @param Google_Http_Request $request
-   * @return Google_Http_Request
-   * @throws Google_Auth_Exception
-   */
-  public function sign(Google_Http_Request $request)
-  {
-    // add the developer key to the request before signing it
-    if ($this->client->getClassConfig($this, 'developer_key')) {
-      $request->setQueryParam('key', $this->client->getClassConfig($this, 'developer_key'));
-    }
-
-    // Cannot sign the request without an OAuth access token.
-    if (null == $this->token && null == $this->assertionCredentials) {
-      return $request;
-    }
-
-    // Check if the token is set to expire in the next 30 seconds
-    // (or has already expired).
-    if ($this->isAccessTokenExpired()) {
-      if ($this->assertionCredentials) {
-        $this->refreshTokenWithAssertion();
-      } else {
-        $this->client->getLogger()->debug('OAuth2 access token expired');
-        if (! array_key_exists('refresh_token', $this->token)) {
-          $error = "The OAuth 2.0 access token has expired,"
-                  ." and a refresh token is not available. Refresh tokens"
-                  ." are not returned for responses that were auto-approved.";
-
-          $this->client->getLogger()->error($error);
-          throw new Google_Auth_Exception($error);
+        $resp = $this->jwtDecode($idToken, $publicKey, $allowed_algs);
+        if (!property_exists($resp, 'aud')) {
+            throw new \DomainException('No audience found the id token');
         }
-        $this->refreshToken($this->token['refresh_token']);
-      }
+        if ($resp->aud != $this->getAudience()) {
+            throw new \DomainException('Wrong audience present in the id token');
+        }
+
+        return $resp;
     }
 
-    $this->client->getLogger()->debug('OAuth2 authentication');
+    /**
+     * Obtains the encoded jwt from the instance data.
+     *
+     * @param array $config array optional configuration parameters
+     *
+     * @return string
+     */
+    public function toJwt(array $config = [])
+    {
+        if (is_null($this->getSigningKey())) {
+            throw new \DomainException('No signing key available');
+        }
+        if (is_null($this->getSigningAlgorithm())) {
+            throw new \DomainException('No signing algorithm specified');
+        }
+        $now = time();
 
-    // Add the OAuth2 header to the request
-    $request->setRequestHeaders(
-        array('Authorization' => 'Bearer ' . $this->token['access_token'])
-    );
+        $opts = array_merge([
+            'skew' => self::DEFAULT_SKEW_SECONDS,
+        ], $config);
 
-    return $request;
-  }
+        $assertion = [
+            'iss' => $this->getIssuer(),
+            'aud' => $this->getAudience(),
+            'exp' => ($now + $this->getExpiry()),
+            'iat' => ($now - $opts['skew']),
+        ];
+        foreach ($assertion as $k => $v) {
+            if (is_null($v)) {
+                throw new \DomainException($k . ' should not be null');
+            }
+        }
+        if (!(is_null($this->getScope()))) {
+            $assertion['scope'] = $this->getScope();
+        }
+        if (!(is_null($this->getSub()))) {
+            $assertion['sub'] = $this->getSub();
+        }
+        $assertion += $this->getAdditionalClaims();
 
-  /**
-   * Fetches a fresh access token with the given refresh token.
-   * @param string $refreshToken
-   * @return void
-   */
-  public function refreshToken($refreshToken)
-  {
-    $this->refreshTokenRequest(
-        array(
-          'client_id' => $this->client->getClassConfig($this, 'client_id'),
-          'client_secret' => $this->client->getClassConfig($this, 'client_secret'),
-          'refresh_token' => $refreshToken,
-          'grant_type' => 'refresh_token'
-        )
-    );
-  }
-
-  /**
-   * Fetches a fresh access token with a given assertion token.
-   * @param Google_Auth_AssertionCredentials $assertionCredentials optional.
-   * @return void
-   */
-  public function refreshTokenWithAssertion($assertionCredentials = null)
-  {
-    if (!$assertionCredentials) {
-      $assertionCredentials = $this->assertionCredentials;
+        return $this->jwtEncode($assertion, $this->getSigningKey(),
+            $this->getSigningAlgorithm());
     }
 
-    $cacheKey = $assertionCredentials->getCacheKey();
+    /**
+     * Generates a request for token credentials.
+     *
+     * @return RequestInterface the authorization Url.
+     */
+    public function generateCredentialsRequest()
+    {
+        $uri = $this->getTokenCredentialUri();
+        if (is_null($uri)) {
+            throw new \DomainException('No token credential URI was set.');
+        }
 
-    if ($cacheKey) {
-      // We can check whether we have a token available in the
-      // cache. If it is expired, we can retrieve a new one from
-      // the assertion.
-      $token = $this->client->getCache()->get($cacheKey);
-      if ($token) {
-        $this->setAccessToken($token);
-      }
-      if (!$this->isAccessTokenExpired()) {
-        return;
-      }
-    }
+        $grantType = $this->getGrantType();
+        $params = array('grant_type' => $grantType);
+        switch ($grantType) {
+            case 'authorization_code':
+                $params['code'] = $this->getCode();
+                $params['redirect_uri'] = $this->getRedirectUri();
+                $this->addClientCredentials($params);
+                break;
+            case 'password':
+                $params['username'] = $this->getUsername();
+                $params['password'] = $this->getPassword();
+                $this->addClientCredentials($params);
+                break;
+            case 'refresh_token':
+                $params['refresh_token'] = $this->getRefreshToken();
+                $this->addClientCredentials($params);
+                break;
+            case self::JWT_URN:
+                $params['assertion'] = $this->toJwt();
+                break;
+            default:
+                if (!is_null($this->getRedirectUri())) {
+                    # Grant type was supposed to be 'authorization_code', as there
+                    # is a redirect URI.
+                    throw new \DomainException('Missing authorization code');
+                }
+                unset($params['grant_type']);
+                if (!is_null($grantType)) {
+                    $params['grant_type'] = $grantType;
+                }
+                $params = array_merge($params, $this->getExtensionParams());
+        }
 
-    $this->client->getLogger()->debug('OAuth2 access token expired');
-    $this->refreshTokenRequest(
-        array(
-          'grant_type' => 'assertion',
-          'assertion_type' => $assertionCredentials->assertionType,
-          'assertion' => $assertionCredentials->generateAssertion(),
-        )
-    );
+        $headers = [
+            'Cache-Control' => 'no-store',
+            'Content-Type' => 'application/x-www-form-urlencoded',
+        ];
 
-    if ($cacheKey) {
-      // Attempt to cache the token.
-      $this->client->getCache()->set(
-          $cacheKey,
-          $this->getAccessToken()
-      );
-    }
-  }
-
-  private function refreshTokenRequest($params)
-  {
-    if (isset($params['assertion'])) {
-      $this->client->getLogger()->info(
-          'OAuth2 access token refresh with Signed JWT assertion grants.'
-      );
-    } else {
-      $this->client->getLogger()->info('OAuth2 access token refresh');
-    }
-
-    $http = new Google_Http_Request(
-        self::OAUTH2_TOKEN_URI,
-        'POST',
-        array(),
-        $params
-    );
-    $http->disableGzip();
-    $request = $this->client->getIo()->makeRequest($http);
-
-    $code = $request->getResponseHttpCode();
-    $body = $request->getResponseBody();
-    if (200 == $code) {
-      $token = json_decode($body, true);
-      if ($token == null) {
-        throw new Google_Auth_Exception("Could not json decode the access token");
-      }
-
-      if (! isset($token['access_token']) || ! isset($token['expires_in'])) {
-        throw new Google_Auth_Exception("Invalid token format");
-      }
-
-      if (isset($token['id_token'])) {
-        $this->token['id_token'] = $token['id_token'];
-      }
-      $this->token['access_token'] = $token['access_token'];
-      $this->token['expires_in'] = $token['expires_in'];
-      $this->token['created'] = time();
-    } else {
-      throw new Google_Auth_Exception("Error refreshing the OAuth2 token, message: '$body'", $code);
-    }
-  }
-
-  /**
-   * Revoke an OAuth2 access token or refresh token. This method will revoke the current access
-   * token, if a token isn't provided.
-   * @throws Google_Auth_Exception
-   * @param string|null $token The token (access token or a refresh token) that should be revoked.
-   * @return boolean Returns True if the revocation was successful, otherwise False.
-   */
-  public function revokeToken($token = null)
-  {
-    if (!$token) {
-      if (!$this->token) {
-        // Not initialized, no token to actually revoke
-        return false;
-      } elseif (array_key_exists('refresh_token', $this->token)) {
-        $token = $this->token['refresh_token'];
-      } else {
-        $token = $this->token['access_token'];
-      }
-    }
-    $request = new Google_Http_Request(
-        self::OAUTH2_REVOKE_URI,
-        'POST',
-        array(),
-        "token=$token"
-    );
-    $request->disableGzip();
-    $response = $this->client->getIo()->makeRequest($request);
-    $code = $response->getResponseHttpCode();
-    if ($code == 200) {
-      $this->token = null;
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Returns if the access_token is expired.
-   * @return bool Returns True if the access_token is expired.
-   */
-  public function isAccessTokenExpired()
-  {
-    if (!$this->token || !isset($this->token['created'])) {
-      return true;
-    }
-
-    // If the token is set to expire in the next 30 seconds.
-    $expired = ($this->token['created']
-        + ($this->token['expires_in'] - 30)) < time();
-
-    return $expired;
-  }
-
-  // Gets federated sign-on certificates to use for verifying identity tokens.
-  // Returns certs as array structure, where keys are key ids, and values
-  // are PEM encoded certificates.
-  private function getFederatedSignOnCerts()
-  {
-    return $this->retrieveCertsFromLocation(
-        $this->client->getClassConfig($this, 'federated_signon_certs_url')
-    );
-  }
-
-  /**
-   * Retrieve and cache a certificates file.
-   *
-   * @param $url string location
-   * @throws Google_Auth_Exception
-   * @return array certificates
-   */
-  public function retrieveCertsFromLocation($url)
-  {
-    // If we're retrieving a local file, just grab it.
-    if ("http" != substr($url, 0, 4)) {
-      $file = file_get_contents($url);
-      if ($file) {
-        return json_decode($file, true);
-      } else {
-        throw new Google_Auth_Exception(
-            "Failed to retrieve verification certificates: '" .
-            $url . "'."
+        return new Request(
+            'POST',
+            $uri,
+            $headers,
+            Psr7\build_query($params)
         );
-      }
     }
 
-    // This relies on makeRequest caching certificate responses.
-    $request = $this->client->getIo()->makeRequest(
-        new Google_Http_Request(
-            $url
-        )
-    );
-    if ($request->getResponseHttpCode() == 200) {
-      $certs = json_decode($request->getResponseBody(), true);
-      if ($certs) {
-        return $certs;
-      }
-    }
-    throw new Google_Auth_Exception(
-        "Failed to retrieve verification certificates: '" .
-        $request->getResponseBody() . "'.",
-        $request->getResponseHttpCode()
-    );
-  }
+    /**
+     * Fetches the auth tokens based on the current state.
+     *
+     * @param callable $httpHandler callback which delivers psr7 request
+     *
+     * @return array the response
+     */
+    public function fetchAuthToken(callable $httpHandler = null)
+    {
+        if (is_null($httpHandler)) {
+            $httpHandler = HttpHandlerFactory::build(HttpClientCache::getHttpClient());
+        }
 
-  /**
-   * Verifies an id token and returns the authenticated apiLoginTicket.
-   * Throws an exception if the id token is not valid.
-   * The audience parameter can be used to control which id tokens are
-   * accepted.  By default, the id token must have been issued to this OAuth2 client.
-   *
-   * @param $id_token
-   * @param $audience
-   * @return Google_Auth_LoginTicket
-   */
-  public function verifyIdToken($id_token = null, $audience = null)
-  {
-    if (!$id_token) {
-      $id_token = $this->token['id_token'];
-    }
-    $certs = $this->getFederatedSignonCerts();
-    if (!$audience) {
-      $audience = $this->client->getClassConfig($this, 'client_id');
+        $response = $httpHandler($this->generateCredentialsRequest());
+        $credentials = $this->parseTokenResponse($response);
+        $this->updateToken($credentials);
+
+        return $credentials;
     }
 
-    return $this->verifySignedJwtWithCerts(
-        $id_token,
-        $certs,
-        $audience,
-        array(self::OAUTH2_ISSUER, self::OAUTH2_ISSUER_HTTPS)
-    );
-  }
+    /**
+     * Obtains a key that can used to cache the results of #fetchAuthToken.
+     *
+     * The key is derived from the scopes.
+     *
+     * @return string a key that may be used to cache the auth token.
+     */
+    public function getCacheKey()
+    {
+        if (is_string($this->scope)) {
+            return $this->scope;
+        }
 
-  /**
-   * Verifies the id token, returns the verified token contents.
-   *
-   * @param $jwt string the token
-   * @param $certs array of certificates
-   * @param $required_audience string the expected consumer of the token
-   * @param [$issuer] the expected issues, defaults to Google
-   * @param [$max_expiry] the max lifetime of a token, defaults to MAX_TOKEN_LIFETIME_SECS
-   * @throws Google_Auth_Exception
-   * @return mixed token information if valid, false if not
-   */
-  public function verifySignedJwtWithCerts(
-      $jwt,
-      $certs,
-      $required_audience,
-      $issuer = null,
-      $max_expiry = null
-  ) {
-    if (!$max_expiry) {
-      // Set the maximum time we will accept a token for.
-      $max_expiry = self::MAX_TOKEN_LIFETIME_SECS;
+        if (is_array($this->scope)) {
+            return implode(':', $this->scope);
+        }
+
+        // If scope has not set, return null to indicate no caching.
+        return null;
     }
 
-    $segments = explode(".", $jwt);
-    if (count($segments) != 3) {
-      throw new Google_Auth_Exception("Wrong number of segments in token: $jwt");
-    }
-    $signed = $segments[0] . "." . $segments[1];
-    $signature = Google_Utils::urlSafeB64Decode($segments[2]);
+    /**
+     * Parses the fetched tokens.
+     *
+     * @param ResponseInterface $resp the response.
+     *
+     * @return array the tokens parsed from the response body.
+     *
+     * @throws \Exception
+     */
+    public function parseTokenResponse(ResponseInterface $resp)
+    {
+        $body = (string)$resp->getBody();
+        if ($resp->hasHeader('Content-Type') &&
+            $resp->getHeaderLine('Content-Type') == 'application/x-www-form-urlencoded'
+        ) {
+            $res = array();
+            parse_str($body, $res);
 
-    // Parse envelope.
-    $envelope = json_decode(Google_Utils::urlSafeB64Decode($segments[0]), true);
-    if (!$envelope) {
-      throw new Google_Auth_Exception("Can't parse token envelope: " . $segments[0]);
-    }
+            return $res;
+        }
 
-    // Parse token
-    $json_body = Google_Utils::urlSafeB64Decode($segments[1]);
-    $payload = json_decode($json_body, true);
-    if (!$payload) {
-      throw new Google_Auth_Exception("Can't parse token payload: " . $segments[1]);
-    }
+        // Assume it's JSON; if it's not throw an exception
+        if (null === $res = json_decode($body, true)) {
+            throw new \Exception('Invalid JSON response');
+        }
 
-    // Check signature
-    $verified = false;
-    foreach ($certs as $keyName => $pem) {
-      $public_key = new Google_Verifier_Pem($pem);
-      if ($public_key->verify($signed, $signature)) {
-        $verified = true;
-        break;
-      }
-    }
-
-    if (!$verified) {
-      throw new Google_Auth_Exception("Invalid token signature: $jwt");
+        return $res;
     }
 
-    // Check issued-at timestamp
-    $iat = 0;
-    if (array_key_exists("iat", $payload)) {
-      $iat = $payload["iat"];
-    }
-    if (!$iat) {
-      throw new Google_Auth_Exception("No issue time in token: $json_body");
-    }
-    $earliest = $iat - self::CLOCK_SKEW_SECS;
+    /**
+     * Updates an OAuth 2.0 client.
+     *
+     * @example
+     *   client.updateToken([
+     *     'refresh_token' => 'n4E9O119d',
+     *     'access_token' => 'FJQbwq9',
+     *     'expires_in' => 3600
+     *   ])
+     *
+     * @param array $config
+     *  The configuration parameters related to the token.
+     *
+     *  - refresh_token
+     *    The refresh token associated with the access token
+     *    to be refreshed.
+     *
+     *  - access_token
+     *    The current access token for this client.
+     *
+     *  - id_token
+     *    The current ID token for this client.
+     *
+     *  - expires_in
+     *    The time in seconds until access token expiration.
+     *
+     *  - expires_at
+     *    The time as an integer number of seconds since the Epoch
+     *
+     *  - issued_at
+     *    The timestamp that the token was issued at.
+     */
+    public function updateToken(array $config)
+    {
+        $opts = array_merge([
+            'extensionParams' => [],
+            'access_token' => null,
+            'id_token' => null,
+            'expires_in' => null,
+            'expires_at' => null,
+            'issued_at' => null,
+        ], $config);
 
-    // Check expiration timestamp
-    $now = time();
-    $exp = 0;
-    if (array_key_exists("exp", $payload)) {
-      $exp = $payload["exp"];
-    }
-    if (!$exp) {
-      throw new Google_Auth_Exception("No expiration time in token: $json_body");
-    }
-    if ($exp >= $now + $max_expiry) {
-      throw new Google_Auth_Exception(
-          sprintf("Expiration time too far in future: %s", $json_body)
-      );
-    }
+        $this->setExpiresAt($opts['expires_at']);
+        $this->setExpiresIn($opts['expires_in']);
+        // By default, the token is issued at `Time.now` when `expiresIn` is set,
+        // but this can be used to supply a more precise time.
+        if (!is_null($opts['issued_at'])) {
+            $this->setIssuedAt($opts['issued_at']);
+        }
 
-    $latest = $exp + self::CLOCK_SKEW_SECS;
-    if ($now < $earliest) {
-      throw new Google_Auth_Exception(
-          sprintf(
-              "Token used too early, %s < %s: %s",
-              $now,
-              $earliest,
-              $json_body
-          )
-      );
-    }
-    if ($now > $latest) {
-      throw new Google_Auth_Exception(
-          sprintf(
-              "Token used too late, %s > %s: %s",
-              $now,
-              $latest,
-              $json_body
-          )
-      );
-    }
-
-    // support HTTP and HTTPS issuers
-    // @see https://developers.google.com/identity/sign-in/web/backend-auth
-    $iss = $payload['iss'];
-    if ($issuer && !in_array($iss, (array) $issuer)) {
-      throw new Google_Auth_Exception(
-          sprintf(
-              "Invalid issuer, %s not in %s: %s",
-              $iss,
-              "[".implode(",", (array) $issuer)."]",
-              $json_body
-          )
-      );
-    }
-
-    // Check audience
-    $aud = $payload["aud"];
-    if ($aud != $required_audience) {
-      throw new Google_Auth_Exception(
-          sprintf(
-              "Wrong recipient, %s != %s:",
-              $aud,
-              $required_audience,
-              $json_body
-          )
-      );
+        $this->setAccessToken($opts['access_token']);
+        $this->setIdToken($opts['id_token']);
+        // The refresh token should only be updated if a value is explicitly
+        // passed in, as some access token responses do not include a refresh
+        // token.
+        if (array_key_exists('refresh_token', $opts)) {
+            $this->setRefreshToken($opts['refresh_token']);
+        }
     }
 
-    // All good.
-    return new Google_Auth_LoginTicket($envelope, $payload);
-  }
+    /**
+     * Builds the authorization Uri that the user should be redirected to.
+     *
+     * @param array $config configuration options that customize the return url
+     *
+     * @return UriInterface the authorization Url.
+     *
+     * @throws InvalidArgumentException
+     */
+    public function buildFullAuthorizationUri(array $config = [])
+    {
+        if (is_null($this->getAuthorizationUri())) {
+            throw new InvalidArgumentException(
+                'requires an authorizationUri to have been set');
+        }
 
-  /**
-   * Add a parameter to the auth params if not empty string.
-   */
-  private function maybeAddParam($params, $name)
-  {
-    $param = $this->client->getClassConfig($this, $name);
-    if ($param != '') {
-      $params[$name] = $param;
+        $params = array_merge([
+            'response_type' => 'code',
+            'access_type' => 'offline',
+            'client_id' => $this->clientId,
+            'redirect_uri' => $this->redirectUri,
+            'state' => $this->state,
+            'scope' => $this->getScope(),
+        ], $config);
+
+        // Validate the auth_params
+        if (is_null($params['client_id'])) {
+            throw new InvalidArgumentException(
+                'missing the required client identifier');
+        }
+        if (is_null($params['redirect_uri'])) {
+            throw new InvalidArgumentException('missing the required redirect URI');
+        }
+        if (!empty($params['prompt']) && !empty($params['approval_prompt'])) {
+            throw new InvalidArgumentException(
+                'prompt and approval_prompt are mutually exclusive');
+        }
+
+        // Construct the uri object; return it if it is valid.
+        $result = clone $this->authorizationUri;
+        $existingParams = Psr7\parse_query($result->getQuery());
+
+        $result = $result->withQuery(
+            Psr7\build_query(array_merge($existingParams, $params))
+        );
+
+        if ($result->getScheme() != 'https') {
+            throw new InvalidArgumentException(
+                'Authorization endpoint must be protected by TLS');
+        }
+
+        return $result;
     }
-    return $params;
-  }
+
+    /**
+     * Sets the authorization server's HTTP endpoint capable of authenticating
+     * the end-user and obtaining authorization.
+     *
+     * @param string $uri
+     */
+    public function setAuthorizationUri($uri)
+    {
+        $this->authorizationUri = $this->coerceUri($uri);
+    }
+
+    /**
+     * Gets the authorization server's HTTP endpoint capable of authenticating
+     * the end-user and obtaining authorization.
+     *
+     * @return UriInterface
+     */
+    public function getAuthorizationUri()
+    {
+        return $this->authorizationUri;
+    }
+
+    /**
+     * Gets the authorization server's HTTP endpoint capable of issuing tokens
+     * and refreshing expired tokens.
+     *
+     * @return string
+     */
+    public function getTokenCredentialUri()
+    {
+        return $this->tokenCredentialUri;
+    }
+
+    /**
+     * Sets the authorization server's HTTP endpoint capable of issuing tokens
+     * and refreshing expired tokens.
+     *
+     * @param string $uri
+     */
+    public function setTokenCredentialUri($uri)
+    {
+        $this->tokenCredentialUri = $this->coerceUri($uri);
+    }
+
+    /**
+     * Gets the redirection URI used in the initial request.
+     *
+     * @return string
+     */
+    public function getRedirectUri()
+    {
+        return $this->redirectUri;
+    }
+
+    /**
+     * Sets the redirection URI used in the initial request.
+     *
+     * @param string $uri
+     */
+    public function setRedirectUri($uri)
+    {
+        if (is_null($uri)) {
+            $this->redirectUri = null;
+
+            return;
+        }
+        // redirect URI must be absolute
+        if (!$this->isAbsoluteUri($uri)) {
+            // "postmessage" is a reserved URI string in Google-land
+            // @see https://developers.google.com/identity/sign-in/web/server-side-flow
+            if ('postmessage' !== (string)$uri) {
+                throw new InvalidArgumentException(
+                    'Redirect URI must be absolute');
+            }
+        }
+        $this->redirectUri = (string)$uri;
+    }
+
+    /**
+     * Gets the scope of the access requests as a space-delimited String.
+     *
+     * @return string
+     */
+    public function getScope()
+    {
+        if (is_null($this->scope)) {
+            return $this->scope;
+        }
+
+        return implode(' ', $this->scope);
+    }
+
+    /**
+     * Sets the scope of the access request, expressed either as an Array or as
+     * a space-delimited String.
+     *
+     * @param string|array $scope
+     *
+     * @throws InvalidArgumentException
+     */
+    public function setScope($scope)
+    {
+        if (is_null($scope)) {
+            $this->scope = null;
+        } elseif (is_string($scope)) {
+            $this->scope = explode(' ', $scope);
+        } elseif (is_array($scope)) {
+            foreach ($scope as $s) {
+                $pos = strpos($s, ' ');
+                if ($pos !== false) {
+                    throw new InvalidArgumentException(
+                        'array scope values should not contain spaces');
+                }
+            }
+            $this->scope = $scope;
+        } else {
+            throw new InvalidArgumentException(
+                'scopes should be a string or array of strings');
+        }
+    }
+
+    /**
+     * Gets the current grant type.
+     *
+     * @return string
+     */
+    public function getGrantType()
+    {
+        if (!is_null($this->grantType)) {
+            return $this->grantType;
+        }
+
+        // Returns the inferred grant type, based on the current object instance
+        // state.
+        if (!is_null($this->code)) {
+            return 'authorization_code';
+        }
+
+        if (!is_null($this->refreshToken)) {
+            return 'refresh_token';
+        }
+
+        if (!is_null($this->username) && !is_null($this->password)) {
+            return 'password';
+        }
+
+        if (!is_null($this->issuer) && !is_null($this->signingKey)) {
+            return self::JWT_URN;
+        }
+
+        return null;
+    }
+
+    /**
+     * Sets the current grant type.
+     *
+     * @param $grantType
+     *
+     * @throws InvalidArgumentException
+     */
+    public function setGrantType($grantType)
+    {
+        if (in_array($grantType, self::$knownGrantTypes)) {
+            $this->grantType = $grantType;
+        } else {
+            // validate URI
+            if (!$this->isAbsoluteUri($grantType)) {
+                throw new InvalidArgumentException(
+                    'invalid grant type');
+            }
+            $this->grantType = (string)$grantType;
+        }
+    }
+
+    /**
+     * Gets an arbitrary string designed to allow the client to maintain state.
+     *
+     * @return string
+     */
+    public function getState()
+    {
+        return $this->state;
+    }
+
+    /**
+     * Sets an arbitrary string designed to allow the client to maintain state.
+     *
+     * @param string $state
+     */
+    public function setState($state)
+    {
+        $this->state = $state;
+    }
+
+    /**
+     * Gets the authorization code issued to this client.
+     */
+    public function getCode()
+    {
+        return $this->code;
+    }
+
+    /**
+     * Sets the authorization code issued to this client.
+     *
+     * @param string $code
+     */
+    public function setCode($code)
+    {
+        $this->code = $code;
+    }
+
+    /**
+     * Gets the resource owner's username.
+     */
+    public function getUsername()
+    {
+        return $this->username;
+    }
+
+    /**
+     * Sets the resource owner's username.
+     *
+     * @param string $username
+     */
+    public function setUsername($username)
+    {
+        $this->username = $username;
+    }
+
+    /**
+     * Gets the resource owner's password.
+     */
+    public function getPassword()
+    {
+        return $this->password;
+    }
+
+    /**
+     * Sets the resource owner's password.
+     *
+     * @param $password
+     */
+    public function setPassword($password)
+    {
+        $this->password = $password;
+    }
+
+    /**
+     * Sets a unique identifier issued to the client to identify itself to the
+     * authorization server.
+     */
+    public function getClientId()
+    {
+        return $this->clientId;
+    }
+
+    /**
+     * Sets a unique identifier issued to the client to identify itself to the
+     * authorization server.
+     *
+     * @param $clientId
+     */
+    public function setClientId($clientId)
+    {
+        $this->clientId = $clientId;
+    }
+
+    /**
+     * Gets a shared symmetric secret issued by the authorization server, which
+     * is used to authenticate the client.
+     */
+    public function getClientSecret()
+    {
+        return $this->clientSecret;
+    }
+
+    /**
+     * Sets a shared symmetric secret issued by the authorization server, which
+     * is used to authenticate the client.
+     *
+     * @param $clientSecret
+     */
+    public function setClientSecret($clientSecret)
+    {
+        $this->clientSecret = $clientSecret;
+    }
+
+    /**
+     * Gets the Issuer ID when using assertion profile.
+     */
+    public function getIssuer()
+    {
+        return $this->issuer;
+    }
+
+    /**
+     * Sets the Issuer ID when using assertion profile.
+     *
+     * @param string $issuer
+     */
+    public function setIssuer($issuer)
+    {
+        $this->issuer = $issuer;
+    }
+
+    /**
+     * Gets the target sub when issuing assertions.
+     */
+    public function getSub()
+    {
+        return $this->sub;
+    }
+
+    /**
+     * Sets the target sub when issuing assertions.
+     *
+     * @param string $sub
+     */
+    public function setSub($sub)
+    {
+        $this->sub = $sub;
+    }
+
+    /**
+     * Gets the target audience when issuing assertions.
+     */
+    public function getAudience()
+    {
+        return $this->audience;
+    }
+
+    /**
+     * Sets the target audience when issuing assertions.
+     *
+     * @param string $audience
+     */
+    public function setAudience($audience)
+    {
+        $this->audience = $audience;
+    }
+
+    /**
+     * Gets the signing key when using an assertion profile.
+     */
+    public function getSigningKey()
+    {
+        return $this->signingKey;
+    }
+
+    /**
+     * Sets the signing key when using an assertion profile.
+     *
+     * @param string $signingKey
+     */
+    public function setSigningKey($signingKey)
+    {
+        $this->signingKey = $signingKey;
+    }
+
+    /**
+     * Gets the signing algorithm when using an assertion profile.
+     *
+     * @return string
+     */
+    public function getSigningAlgorithm()
+    {
+        return $this->signingAlgorithm;
+    }
+
+    /**
+     * Sets the signing algorithm when using an assertion profile.
+     *
+     * @param string $signingAlgorithm
+     */
+    public function setSigningAlgorithm($signingAlgorithm)
+    {
+        if (is_null($signingAlgorithm)) {
+            $this->signingAlgorithm = null;
+        } elseif (!in_array($signingAlgorithm, self::$knownSigningAlgorithms)) {
+            throw new InvalidArgumentException('unknown signing algorithm');
+        } else {
+            $this->signingAlgorithm = $signingAlgorithm;
+        }
+    }
+
+    /**
+     * Gets the set of parameters used by extension when using an extension
+     * grant type.
+     */
+    public function getExtensionParams()
+    {
+        return $this->extensionParams;
+    }
+
+    /**
+     * Sets the set of parameters used by extension when using an extension
+     * grant type.
+     *
+     * @param $extensionParams
+     */
+    public function setExtensionParams($extensionParams)
+    {
+        $this->extensionParams = $extensionParams;
+    }
+
+    /**
+     * Gets the number of seconds assertions are valid for.
+     */
+    public function getExpiry()
+    {
+        return $this->expiry;
+    }
+
+    /**
+     * Sets the number of seconds assertions are valid for.
+     *
+     * @param int $expiry
+     */
+    public function setExpiry($expiry)
+    {
+        $this->expiry = $expiry;
+    }
+
+    /**
+     * Gets the lifetime of the access token in seconds.
+     */
+    public function getExpiresIn()
+    {
+        return $this->expiresIn;
+    }
+
+    /**
+     * Sets the lifetime of the access token in seconds.
+     *
+     * @param int $expiresIn
+     */
+    public function setExpiresIn($expiresIn)
+    {
+        if (is_null($expiresIn)) {
+            $this->expiresIn = null;
+            $this->issuedAt = null;
+        } else {
+            $this->issuedAt = time();
+            $this->expiresIn = (int)$expiresIn;
+        }
+    }
+
+    /**
+     * Gets the time the current access token expires at.
+     *
+     * @return int
+     */
+    public function getExpiresAt()
+    {
+        if (!is_null($this->expiresAt)) {
+            return $this->expiresAt;
+        }
+
+        if (!is_null($this->issuedAt) && !is_null($this->expiresIn)) {
+            return $this->issuedAt + $this->expiresIn;
+        }
+
+        return null;
+    }
+
+    /**
+     * Returns true if the acccess token has expired.
+     *
+     * @return bool
+     */
+    public function isExpired()
+    {
+        $expiration = $this->getExpiresAt();
+        $now = time();
+
+        return !is_null($expiration) && $now >= $expiration;
+    }
+
+    /**
+     * Sets the time the current access token expires at.
+     *
+     * @param int $expiresAt
+     */
+    public function setExpiresAt($expiresAt)
+    {
+        $this->expiresAt = $expiresAt;
+    }
+
+    /**
+     * Gets the time the current access token was issued at.
+     */
+    public function getIssuedAt()
+    {
+        return $this->issuedAt;
+    }
+
+    /**
+     * Sets the time the current access token was issued at.
+     *
+     * @param int $issuedAt
+     */
+    public function setIssuedAt($issuedAt)
+    {
+        $this->issuedAt = $issuedAt;
+    }
+
+    /**
+     * Gets the current access token.
+     */
+    public function getAccessToken()
+    {
+        return $this->accessToken;
+    }
+
+    /**
+     * Sets the current access token.
+     *
+     * @param string $accessToken
+     */
+    public function setAccessToken($accessToken)
+    {
+        $this->accessToken = $accessToken;
+    }
+
+    /**
+     * Gets the current ID token.
+     */
+    public function getIdToken()
+    {
+        return $this->idToken;
+    }
+
+    /**
+     * Sets the current ID token.
+     *
+     * @param $idToken
+     */
+    public function setIdToken($idToken)
+    {
+        $this->idToken = $idToken;
+    }
+
+    /**
+     * Gets the refresh token associated with the current access token.
+     */
+    public function getRefreshToken()
+    {
+        return $this->refreshToken;
+    }
+
+    /**
+     * Sets the refresh token associated with the current access token.
+     *
+     * @param $refreshToken
+     */
+    public function setRefreshToken($refreshToken)
+    {
+        $this->refreshToken = $refreshToken;
+    }
+
+    /**
+     * Sets additional claims to be included in the JWT token
+     *
+     * @param array $additionalClaims
+     */
+    public function setAdditionalClaims(array $additionalClaims)
+    {
+        $this->additionalClaims = $additionalClaims;
+    }
+
+    /**
+     * Gets the additional claims to be included in the JWT token.
+     *
+     * @return array
+     */
+    public function getAdditionalClaims()
+    {
+        return $this->additionalClaims;
+    }
+
+    /**
+     * The expiration of the last received token.
+     *
+     * @return array
+     */
+    public function getLastReceivedToken()
+    {
+        if ($token = $this->getAccessToken()) {
+            return [
+                'access_token' => $token,
+                'expires_at' => $this->getExpiresAt(),
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Get the client ID.
+     *
+     * Alias of {@see Google\Auth\OAuth2::getClientId()}.
+     *
+     * @param callable $httpHandler
+     * @return string
+     * @access private
+     */
+    public function getClientName(callable $httpHandler = null)
+    {
+        return $this->getClientId();
+    }
+
+    /**
+     * @todo handle uri as array
+     *
+     * @param string $uri
+     *
+     * @return null|UriInterface
+     */
+    private function coerceUri($uri)
+    {
+        if (is_null($uri)) {
+            return;
+        }
+
+        return Psr7\uri_for($uri);
+    }
+
+    /**
+     * @param string $idToken
+     * @param string|array|null $publicKey
+     * @param array $allowedAlgs
+     *
+     * @return object
+     */
+    private function jwtDecode($idToken, $publicKey, $allowedAlgs)
+    {
+        if (class_exists('Firebase\JWT\JWT')) {
+            return \Firebase\JWT\JWT::decode($idToken, $publicKey, $allowedAlgs);
+        }
+
+        return \JWT::decode($idToken, $publicKey, $allowedAlgs);
+    }
+
+    private function jwtEncode($assertion, $signingKey, $signingAlgorithm)
+    {
+        if (class_exists('Firebase\JWT\JWT')) {
+            return \Firebase\JWT\JWT::encode($assertion, $signingKey,
+                $signingAlgorithm);
+        }
+
+        return \JWT::encode($assertion, $signingKey, $signingAlgorithm);
+    }
+
+    /**
+     * Determines if the URI is absolute based on its scheme and host or path
+     * (RFC 3986).
+     *
+     * @param string $uri
+     *
+     * @return bool
+     */
+    private function isAbsoluteUri($uri)
+    {
+        $uri = $this->coerceUri($uri);
+
+        return $uri->getScheme() && ($uri->getHost() || $uri->getPath());
+    }
+
+    /**
+     * @param array $params
+     *
+     * @return array
+     */
+    private function addClientCredentials(&$params)
+    {
+        $clientId = $this->getClientId();
+        $clientSecret = $this->getClientSecret();
+
+        if ($clientId && $clientSecret) {
+            $params['client_id'] = $clientId;
+            $params['client_secret'] = $clientSecret;
+        }
+
+        return $params;
+    }
 }

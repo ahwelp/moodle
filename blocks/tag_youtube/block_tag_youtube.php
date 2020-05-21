@@ -270,7 +270,7 @@ class block_tag_youtube extends block_base {
         // Wrapped in an if in case we call different get_videos_* multiple times.
         if (!isset($this->service)) {
             require_once($CFG->libdir . '/google/lib.php');
-            $client = get_google_client();
+            $client = new Google_Client();
             $client->setDeveloperKey($apikey);
             $client->setScopes(array(Google_Service_YouTube::YOUTUBE_READONLY));
             $this->service = new Google_Service_YouTube($client);

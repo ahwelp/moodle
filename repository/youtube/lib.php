@@ -85,7 +85,7 @@ class repository_youtube extends repository {
 
         if (!isset($this->service)) {
             require_once($CFG->libdir . '/google/lib.php');
-            $this->client = get_google_client();
+            $this->client = new Google_Client();
             $this->client->setDeveloperKey($this->apikey);
             $this->client->setScopes(array(Google_Service_YouTube::YOUTUBE_READONLY));
             $this->service = new Google_Service_YouTube($this->client);
