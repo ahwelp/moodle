@@ -1760,6 +1760,12 @@ function moveto_module($mod, $section, $beforemod=NULL) {
 
     // Add the module into the new section.
     course_add_cm_to_section($section->course, $mod->id, $section->section, $beforemod);
+
+    // Trigger course_module_updated event
+    $context = context_module::instance($mod->id);
+    $event = \core\event\course_module_updated::create_from_cm($mod, $context);
+    $event->trigger();
+
     return $modvisible;
 }
 
