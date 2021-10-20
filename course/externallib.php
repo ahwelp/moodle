@@ -3571,6 +3571,7 @@ class core_course_external extends external_api {
                     $DB->update_record('course_modules', array('id' => $cm->id, 'indent' => $indent));
                     rebuild_course_cache($cm->course);
                 }
+                \core\event\course_module_updated::create_from_cm($cm, $modcontext)->trigger();
                 break;
             case 'delete':
                 require_capability('moodle/course:manageactivities', $modcontext);
