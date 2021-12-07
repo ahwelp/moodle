@@ -303,7 +303,7 @@ class api {
             $settings->tool_mobile_customlangstrings = get_config('tool_mobile', 'customlangstrings');
             $settings->tool_mobile_disabledfeatures = get_config('tool_mobile', 'disabledfeatures');
             $settings->tool_mobile_filetypeexclusionlist = get_config('tool_mobile', 'filetypeexclusionlist');
-            $settings->tool_mobile_custommenuitems = get_config('tool_mobile', 'custommenuitems');
+            $settings->tool_mobile_custommenuitems = self::get_custommenuitems(get_config('tool_mobile', 'custommenuitems'));
             $settings->tool_mobile_apppolicy = get_config('tool_mobile', 'apppolicy');
         }
 
@@ -330,6 +330,26 @@ class api {
         }
 
         return $settings;
+    }
+
+    /**
+     * Returns the custom menu items with variables replaced 
+     *         
+     * @param  string $config menu text content                                                                                                                                                                
+     * @return string menu text content
+     **/
+    public static function get_custommenuitems($config){
+        global $USER;
+
+        preg_match_all('/{{.*}}/im', $config, $matches, PREG_OFFSET_CAPTURE);
+        $matches = $matches[0];
+
+        foreach($matches as $match){
+            $params = explode('.', str_replace('}}', '', str_replace('{{', '', $match[0])));
+            $config = str_replace( $match[0], ${strtoupper($params[0])}->{$params[1]}, $config );
+        }
+
+        return $config;
     }
 
     /*
