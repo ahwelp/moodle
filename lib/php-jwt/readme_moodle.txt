@@ -1,4 +1,5 @@
-Description of php-jwt library import into Moodle
+PHP-JWT
+=======
 
 Dependencies
 ------------

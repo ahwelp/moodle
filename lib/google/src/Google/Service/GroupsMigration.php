@@ -1,6 +1,6 @@
 <?php
 /*
- * Copyright 2010 Google Inc.
+ * Copyright 2014 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -15,11 +15,16 @@
  * the License.
  */
 
+namespace Google\Service;
+
+use Google\Client;
+
 /**
  * Service definition for GroupsMigration (v1).
  *
  * <p>
- * Groups Migration Api.</p>
+ * The Groups Migration API allows domain administrators to archive emails into
+ * Google groups.</p>
  *
  * <p>
  * For more information about this service, see the API
@@ -28,103 +33,52 @@
  *
  * @author Google, Inc.
  */
-class Google_Service_GroupsMigration extends Google_Service
+class GroupsMigration extends \Google\Service
 {
-  /** Manage messages in groups on your domain. */
+  /** Upload messages to any Google group in your domain. */
   const APPS_GROUPS_MIGRATION =
       "https://www.googleapis.com/auth/apps.groups.migration";
 
   public $archive;
-  
 
   /**
    * Constructs the internal representation of the GroupsMigration service.
    *
-   * @param Google_Client $client
+   * @param Client|array $clientOrConfig The client used to deliver requests, or a
+   *                                     config array to pass to a new Client instance.
+   * @param string $rootUrl The root URL used for requests to the service.
    */
-  public function __construct(Google_Client $client)
+  public function __construct($clientOrConfig = [], $rootUrl = null)
   {
-    parent::__construct($client);
-    $this->rootUrl = 'https://www.googleapis.com/';
-    $this->servicePath = 'groups/v1/groups/';
+    parent::__construct($clientOrConfig);
+    $this->rootUrl = $rootUrl ?: 'https://groupsmigration.googleapis.com/';
+    $this->servicePath = '';
+    $this->batchPath = 'batch';
     $this->version = 'v1';
     $this->serviceName = 'groupsmigration';
 
-    $this->archive = new Google_Service_GroupsMigration_Archive_Resource(
+    $this->archive = new GroupsMigration\Resource\Archive(
         $this,
         $this->serviceName,
         'archive',
-        array(
-          'methods' => array(
-            'insert' => array(
-              'path' => '{groupId}/archive',
+        [
+          'methods' => [
+            'insert' => [
+              'path' => 'groups/v1/groups/{groupId}/archive',
               'httpMethod' => 'POST',
-              'parameters' => array(
-                'groupId' => array(
+              'parameters' => [
+                'groupId' => [
                   'location' => 'path',
                   'type' => 'string',
                   'required' => true,
-                ),
-              ),
-            ),
-          )
-        )
+                ],
+              ],
+            ],
+          ]
+        ]
     );
   }
 }
 
-
-/**
- * The "archive" collection of methods.
- * Typical usage is:
- *  <code>
- *   $groupsmigrationService = new Google_Service_GroupsMigration(...);
- *   $archive = $groupsmigrationService->archive;
- *  </code>
- */
-class Google_Service_GroupsMigration_Archive_Resource extends Google_Service_Resource
-{
-
-  /**
-   * Inserts a new mail into the archive of the Google group. (archive.insert)
-   *
-   * @param string $groupId The group ID
-   * @param array $optParams Optional parameters.
-   * @return Google_Service_GroupsMigration_Groups
-   */
-  public function insert($groupId, $optParams = array())
-  {
-    $params = array('groupId' => $groupId);
-    $params = array_merge($params, $optParams);
-    return $this->call('insert', array($params), "Google_Service_GroupsMigration_Groups");
-  }
-}
-
-
-
-
-class Google_Service_GroupsMigration_Groups extends Google_Model
-{
-  protected $internal_gapi_mappings = array(
-  );
-  public $kind;
-  public $responseCode;
-
-
-  public function setKind($kind)
-  {
-    $this->kind = $kind;
-  }
-  public function getKind()
-  {
-    return $this->kind;
-  }
-  public function setResponseCode($responseCode)
-  {
-    $this->responseCode = $responseCode;
-  }
-  public function getResponseCode()
-  {
-    return $this->responseCode;
-  }
-}
+// Adding a class alias for backwards compatibility with the previous class name.
+class_alias(GroupsMigration::class, 'Google_Service_GroupsMigration');

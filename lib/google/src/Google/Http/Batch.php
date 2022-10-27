@@ -15,131 +15,242 @@
  * limitations under the License.
  */
 
-if (!class_exists('Google_Client')) {
-  require_once dirname(__FILE__) . '/../autoload.php';
-}
+namespace Google\Http;
+
+use Google\Client;
+use Google\Service\Exception as GoogleServiceException;
+use GuzzleHttp\Psr7;
+use GuzzleHttp\Psr7\Request;
+use GuzzleHttp\Psr7\Response;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
 
 /**
  * Class to handle batched requests to the Google API service.
+ *
+ * Note that calls to `Google\Http\Batch::execute()` do not clear the queued
+ * requests. To start a new batch, be sure to create a new instance of this
+ * class.
  */
-class Google_Http_Batch
+class Batch
 {
-  /** @var string Multipart Boundary. */
-  private $boundary;
+    const BATCH_PATH = 'batch';
 
-  /** @var array service requests to be executed. */
-  private $requests = array();
+    private static $CONNECTION_ESTABLISHED_HEADERS = [
+        "HTTP/1.0 200 Connection established\r\n\r\n",
+        "HTTP/1.1 200 Connection established\r\n\r\n",
+    ];
 
-  /** @var Google_Client */
-  private $client;
+    /** @var string Multipart Boundary. */
+    private $boundary;
 
-  private $expected_classes = array();
+    /** @var array service requests to be executed. */
+    private $requests = [];
 
-  private $root_url;
+    /** @var Client */
+    private $client;
 
-  private $batch_path;
+    private $rootUrl;
 
-  public function __construct(Google_Client $client, $boundary = false, $rootUrl = '', $batchPath = '')
-  {
-    $this->client = $client;
-    $this->root_url = rtrim($rootUrl ? $rootUrl : $this->client->getBasePath(), '/');
-    $this->batch_path = $batchPath ? $batchPath : 'batch';
-    $this->expected_classes = array();
-    $boundary = (false == $boundary) ? mt_rand() : $boundary;
-    $this->boundary = str_replace('"', '', $boundary);
-  }
+    private $batchPath;
 
-  public function add(Google_Http_Request $request, $key = false)
-  {
-    if (false == $key) {
-      $key = mt_rand();
+    public function __construct(
+        Client $client,
+        $boundary = false,
+        $rootUrl = null,
+        $batchPath = null
+    ) {
+        $this->client = $client;
+        $this->boundary = $boundary ?: mt_rand();
+        $this->rootUrl = rtrim($rootUrl ?: $this->client->getConfig('base_path'), '/');
+        $this->batchPath = $batchPath ?: self::BATCH_PATH;
     }
 
-    $this->requests[$key] = $request;
-  }
-
-  public function execute()
-  {
-    $body = '';
-
-    /** @var Google_Http_Request $req */
-    foreach ($this->requests as $key => $req) {
-      $body .= "--{$this->boundary}\n";
-      $body .= $req->toBatchString($key) . "\n\n";
-      $this->expected_classes["response-" . $key] = $req->getExpectedClass();
-    }
-
-    $body .= "--{$this->boundary}--";
-
-    $url = $this->root_url . '/' . $this->batch_path;
-    $httpRequest = new Google_Http_Request($url, 'POST');
-    $httpRequest->setRequestHeaders(
-        array('Content-Type' => 'multipart/mixed; boundary=' . $this->boundary)
-    );
-
-    $httpRequest->setPostBody($body);
-    $response = $this->client->getIo()->makeRequest($httpRequest);
-
-    return $this->parseResponse($response);
-  }
-
-  public function parseResponse(Google_Http_Request $response)
-  {
-    $contentType = $response->getResponseHeader('content-type');
-    $contentType = explode(';', $contentType);
-    $boundary = false;
-    foreach ($contentType as $part) {
-      $part = (explode('=', $part, 2));
-      if (isset($part[0]) && 'boundary' == trim($part[0])) {
-        $boundary = $part[1];
-      }
-    }
-
-    $body = $response->getResponseBody();
-    if ($body) {
-      $body = str_replace("--$boundary--", "--$boundary", $body);
-      $parts = explode("--$boundary", $body);
-      $responses = array();
-
-      foreach ($parts as $part) {
-        $part = trim($part);
-        if (!empty($part)) {
-          list($metaHeaders, $part) = explode("\r\n\r\n", $part, 2);
-          $metaHeaders = $this->client->getIo()->getHttpResponseHeaders($metaHeaders);
-
-          $status = substr($part, 0, strpos($part, "\n"));
-          $status = explode(" ", $status);
-          $status = $status[1];
-
-          list($partHeaders, $partBody) = $this->client->getIo()->ParseHttpResponse($part, false);
-          $response = new Google_Http_Request("");
-          $response->setResponseHttpCode($status);
-          $response->setResponseHeaders($partHeaders);
-          $response->setResponseBody($partBody);
-
-          // Need content id.
-          $key = $metaHeaders['content-id'];
-
-          if (isset($this->expected_classes[$key]) &&
-              strlen($this->expected_classes[$key]) > 0) {
-            $class = $this->expected_classes[$key];
-            $response->setExpectedClass($class);
-          }
-
-          try {
-            $response = Google_Http_REST::decodeHttpResponse($response, $this->client);
-            $responses[$key] = $response;
-          } catch (Google_Service_Exception $e) {
-            // Store the exception as the response, so successful responses
-            // can be processed.
-            $responses[$key] = $e;
-          }
+    public function add(RequestInterface $request, $key = false)
+    {
+        if (false == $key) {
+            $key = mt_rand();
         }
-      }
 
-      return $responses;
+        $this->requests[$key] = $request;
     }
 
-    return null;
-  }
+    public function execute()
+    {
+        $body = '';
+        $classes = [];
+        $batchHttpTemplate = <<<EOF
+--%s
+Content-Type: application/http
+Content-Transfer-Encoding: binary
+MIME-Version: 1.0
+Content-ID: %s
+
+%s
+%s%s
+
+
+EOF;
+
+        /** @var RequestInterface $request */
+        foreach ($this->requests as $key => $request) {
+            $firstLine = sprintf(
+                '%s %s HTTP/%s',
+                $request->getMethod(),
+                $request->getRequestTarget(),
+                $request->getProtocolVersion()
+            );
+
+            $content = (string) $request->getBody();
+
+            $headers = '';
+            foreach ($request->getHeaders() as $name => $values) {
+                $headers .= sprintf("%s:%s\r\n", $name, implode(', ', $values));
+            }
+
+            $body .= sprintf(
+                $batchHttpTemplate,
+                $this->boundary,
+                $key,
+                $firstLine,
+                $headers,
+                $content ? "\n" . $content : ''
+            );
+
+            $classes['response-' . $key] = $request->getHeaderLine('X-Php-Expected-Class');
+        }
+
+        $body .= "--{$this->boundary}--";
+        $body = trim($body);
+        $url = $this->rootUrl . '/' . $this->batchPath;
+        $headers = [
+            'Content-Type' => sprintf('multipart/mixed; boundary=%s', $this->boundary),
+            'Content-Length' => (string) strlen($body),
+        ];
+
+        $request = new Request(
+            'POST',
+            $url,
+            $headers,
+            $body
+        );
+
+        $response = $this->client->execute($request);
+
+        return $this->parseResponse($response, $classes);
+    }
+
+    public function parseResponse(ResponseInterface $response, $classes = [])
+    {
+        $contentType = $response->getHeaderLine('content-type');
+        $contentType = explode(';', $contentType);
+        $boundary = false;
+        foreach ($contentType as $part) {
+            $part = explode('=', $part, 2);
+            if (isset($part[0]) && 'boundary' == trim($part[0])) {
+                $boundary = $part[1];
+            }
+        }
+
+        $body = (string) $response->getBody();
+        if (!empty($body)) {
+            $body = str_replace("--$boundary--", "--$boundary", $body);
+            $parts = explode("--$boundary", $body);
+            $responses = [];
+            $requests = array_values($this->requests);
+
+            foreach ($parts as $i => $part) {
+                $part = trim($part);
+                if (!empty($part)) {
+                    list($rawHeaders, $part) = explode("\r\n\r\n", $part, 2);
+                    $headers = $this->parseRawHeaders($rawHeaders);
+
+                    $status = substr($part, 0, strpos($part, "\n"));
+                    $status = explode(" ", $status);
+                    $status = $status[1];
+
+                    list($partHeaders, $partBody) = $this->parseHttpResponse($part, 0);
+                    $response = new Response(
+                        (int) $status,
+                        $partHeaders,
+                        Psr7\Utils::streamFor($partBody)
+                    );
+
+                    // Need content id.
+                    $key = $headers['content-id'];
+
+                    try {
+                        $response = REST::decodeHttpResponse($response, $requests[$i-1]);
+                    } catch (GoogleServiceException $e) {
+                        // Store the exception as the response, so successful responses
+                        // can be processed.
+                        $response = $e;
+                    }
+
+                    $responses[$key] = $response;
+                }
+            }
+
+            return $responses;
+        }
+
+        return null;
+    }
+
+    private function parseRawHeaders($rawHeaders)
+    {
+        $headers = [];
+        $responseHeaderLines = explode("\r\n", $rawHeaders);
+        foreach ($responseHeaderLines as $headerLine) {
+            if ($headerLine && strpos($headerLine, ':') !== false) {
+                list($header, $value) = explode(': ', $headerLine, 2);
+                $header = strtolower($header);
+                if (isset($headers[$header])) {
+                    $headers[$header] = array_merge((array)$headers[$header], (array)$value);
+                } else {
+                    $headers[$header] = $value;
+                }
+            }
+        }
+        return $headers;
+    }
+
+    /**
+     * Used by the IO lib and also the batch processing.
+     *
+     * @param string $respData
+     * @param int $headerSize
+     * @return array
+     */
+    private function parseHttpResponse($respData, $headerSize)
+    {
+        // check proxy header
+        foreach (self::$CONNECTION_ESTABLISHED_HEADERS as $established_header) {
+            if (stripos($respData, $established_header) !== false) {
+                // existed, remove it
+                $respData = str_ireplace($established_header, '', $respData);
+                // Subtract the proxy header size unless the cURL bug prior to 7.30.0
+                // is present which prevented the proxy header size from being taken into
+                // account.
+                // @TODO look into this
+                // if (!$this->needsQuirk()) {
+                //   $headerSize -= strlen($established_header);
+                // }
+                break;
+            }
+        }
+
+        if ($headerSize) {
+            $responseBody = substr($respData, $headerSize);
+            $responseHeaders = substr($respData, 0, $headerSize);
+        } else {
+            $responseSegments = explode("\r\n\r\n", $respData, 2);
+            $responseHeaders = $responseSegments[0];
+            $responseBody = isset($responseSegments[1]) ? $responseSegments[1] : null;
+        }
+
+        $responseHeaders = $this->parseRawHeaders($responseHeaders);
+
+        return [$responseHeaders, $responseBody];
+    }
 }

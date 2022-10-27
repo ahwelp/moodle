@@ -111,7 +111,7 @@ class portfolio_plugin_googledocs extends portfolio_plugin_push_base {
                             'parents' => $parents
                         ]);
 
-                        $drivefile = $this->service->files->insert($filemetadata, ['fields' => 'id']);
+                        $drivefile = $this->service->files->create($filemetadata, ['fields' => 'id']);
                         $directoryids[$path] = ['id' => $drivefile->id];
                     } catch (Exception $e) {
                         throw new portfolio_plugin_exception('sendfailed', 'portfolio_gdocs', $directory);
@@ -124,14 +124,14 @@ class portfolio_plugin_googledocs extends portfolio_plugin_push_base {
             try {
                 // Create drivefile object and fill it with data.
                 $drivefile = new Google_Service_Drive_DriveFile();
-                $drivefile->setTitle($file->get_filename());
+                $drivefile->setName($file->get_filename());
                 $drivefile->setMimeType($file->get_mimetype());
                 // Add the parent directory id to make sure the file gets created in the correct
                 // directory in Google Drive.
                 $drivefile->setParents([$directoryids[$filepath]]);
 
                 $filecontent = $file->get_content();
-                $this->service->files->insert($drivefile,
+                $this->service->files->create($drivefile,
                                               array('data' => $filecontent,
                                                     'mimeType' => $file->get_mimetype(),
                                                     'uploadType' => 'multipart'));
@@ -139,6 +139,12 @@ class portfolio_plugin_googledocs extends portfolio_plugin_push_base {
                 throw new portfolio_plugin_exception('sendfailed', 'portfolio_gdocs', $file->get_filename());
             }
         }
+
+        // Unset the client and the services. They will not be necessary anymore
+        // and will break the serialize() of the exporter because they use clousures.
+        unset($this->client);
+        unset($this->service);
+
         return true;
     }
     /**
@@ -239,7 +245,7 @@ class portfolio_plugin_googledocs extends portfolio_plugin_push_base {
         $secret = $this->get_config('secret');
 
         // Setup Google client.
-        $this->client = get_google_client();
+        $this->client = new Google_Client();
         $this->client->setClientId($clientid);
         $this->client->setClientSecret($secret);
         $this->client->setScopes(array(Google_Service_Drive::DRIVE_FILE));
