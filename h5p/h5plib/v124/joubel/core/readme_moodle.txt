@@ -1,54 +1,31 @@
 H5P PHP library
 ---------------
 
-Downloaded last release from: https://github.com/h5p/h5p-php-library/releases
+Downloaded last release from:  https://github.com/h5p/h5p-php-library/tags
 
 Import procedure:
-
-- Copy all the files from the folder repository in this directory.
+ * Remove the content in this folder (but the readme_moodle.txt)
+ * Copy all the files from the folder repository in this directory.
 
 Removed:
  * composer.json
  * .gitignore
+ * .travis.yml
 
-Added:
- * readme_moodle.txt
+Changed:
+ 1. Replace the $_SESSION references with $SESSION. That implies that the information is saved to backends, so only the Moodle one
+    should be used by core (core should be free from $_SESSION and always use $SESSION).
+    More specifically, in h5p.classes.php file, into hashToken() method:
+        * Declare the global $SESSION.
+        * Change all the $_SESSION by $SESSION.
+        * Change all the $_SESSION['xxxx'] by $SESSION->xxxx.
+    A script for testing this part can be found in MDL-68068
 
-Downloaded version: 1.24 release
+2. Add namespace to this library to avoid collision. It means:
+  - Add the "namespace Moodle;" line at the top of all the h5p*.php files in the root folder.
+  - Replace \H5Pxxx uses to H5Pxxx (for instance, in h5p-default-storage.class.php there are several references to \H5PCore that
+    must be replaced with H5PCore).
+  - Add "use ZipArchive;" in h5p.classes.h5p (check that it's still used before replacing it when upgrading the library).
 
-Changes:
-1. In order to allow the dependency path to be overridden by child H5PCore classes, a couple of minor changes have been added to the
-h5p.classes.php file:
-    - Into the getDependenciesFiles method, the line 2435:
-        $dependency['path'] = 'libraries/' . H5PCore::libraryToString($dependency, TRUE);
-
-      has been changed to:
-        $dependency['path'] = $this->getDependencyPath($dependency);
-
-     - The method getDependencyPath has been added (line 2455). It might be rewritten by child classes.
-A PR has been sent to the H5P library with these changes:
-https://github.com/h5p/h5p-php-library/compare/master...andrewnicols:libraryPathSubclass
-Hopefully, when upgrading, these patch won't be needed because it will be included in the H5P library by default.
-
-
-2. As the mbstring extension is optional in Moodle, the following changes have been hardcoded to the library:
-2.1. Comment the following methods in h5p.classes.php file where the extension_loaded('mbstring') is called:
-    * isValidPackage
-    * checkSetupErrorMessage
-    * validateText
-    * validateContentFiles
-
-2.2. Change all the mb_uses straight to the core_text() alternatives. Version 1.24 has 3 ocurrences in h5p.classes.php
-and 1 ocurrence in h5p-metadata.class.php.
-
-3. Another PR has been sent to H5P library (https://github.com/h5p/h5p-php-library/pull/69) to fix some php74 minor problems. The same fix is being applied locally by MDL-67077. Once we import a new version, if it includes de fix, this won't be needed to reapply and can be removed.
-
-4. Replace the $_SESSION references to $SESSION. That implies that the information is saved to backends, so only the Moodle one should be used by core (core should be free from $_SESSION and always use $SESSION).
-h5p.classes.php file:
-  - Into hashToken method:
-    Declare the global $SESSION.
-    Change all the $_SESSION by $SESSION.
-A script for testing this part can be found in MDL-68068
-
-The point 2 from above won't be needed once the mbstring extension becomes mandatory in Moodle. A request has been
-sent to MDL-65809.
+3. Check if there are changes in the getLocalization() method in h5p.classes.php and update lang/en/h5p.php accordingly.
+   If there are changes, check the t() method in h5p/classes/framework.php too (updating or adding new ones).

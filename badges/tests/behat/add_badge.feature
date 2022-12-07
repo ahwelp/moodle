@@ -9,29 +9,23 @@ Feature: Add badges to the system
     And I log in as "admin"
 
   @javascript
-  Scenario: Setting badges settings
-    Given I navigate to "Badges > Badges settings" in site administration
-    And I set the field "Badge issuer name" to "Test Badge Site"
-    And I set the field "Badge issuer email address" to "testuser@example.com"
-    And I press "Save changes"
-    And I follow "Badges"
-    When I follow "Add a new badge"
-    And I press "Issuer details"
-    Then I should see "testuser@example.com"
-    And I should see "Test Badge Site"
-
-  @javascript
   Scenario: Accessing the badges
-    And I press "Customise this page"
+    And I turn editing mode on
+    And the following config values are set as admin:
+      | unaddableblocks | | theme_boost|
    # TODO MDL-57120 site "Badges" link not accessible without navigation block.
     And I add the "Navigation" block if not present
     And I click on "Site pages" "list_item" in the "Navigation" "block"
     Given I click on "Site badges" "link" in the "Navigation" "block"
-    Then I should see "There are no badges available."
+    Then I should see "There are currently no badges available for users to earn."
 
   @javascript @_file_upload
   Scenario: Add a badge
-    Given I navigate to "Badges > Add a new badge" in site administration
+    Given I navigate to "Badges > Badges settings" in site administration
+    And I set the field "Badge issuer name" to "Test Badge Site"
+    And I set the field "Badge issuer email address" to "testuser@example.com"
+    And I press "Save changes"
+    And I navigate to "Badges > Add a new badge" in site administration
     And I set the following fields to these values:
       | Name | Test badge with 'apostrophe' and other friends (<>&@#) |
       | Version | v1 |
@@ -47,9 +41,13 @@ Feature: Add badges to the system
     And I should see "Related badges (0)"
     And I should see "Alignments (0)"
     And I should not see "Create badge"
-    And I follow "Manage badges"
-    And I should see "Number of badges available: 1"
-    And I should not see "There are no badges available."
+    And I should not see "Issuer details"
+    And I select "Overview" from the "jump" singleselect
+    And I should see "Issuer details"
+    And I should see "Test Badge Site"
+    And I should see "testuser@example.com"
+    And I navigate to "Badges > Manage badges" in site administration
+    And I should not see "There are currently no badges available for users to earn."
 
   @javascript @_file_upload
   Scenario: Add a badge related
@@ -64,8 +62,7 @@ Feature: Add badges to the system
     And I upload "badges/tests/behat/badge.png" file to "Image" filemanager
     And I press "Create badge"
     And I wait until the page is ready
-    And I follow "Manage badges"
-    And I should see "Number of badges available: 1"
+    And I navigate to "Badges > Manage badges" in site administration
     And I press "Add a new badge"
     And I set the following fields to these values:
       | Name | Test Badge 2 |
@@ -76,7 +73,7 @@ Feature: Add badges to the system
       | Image caption | Test caption image |
     And I upload "badges/tests/behat/badge.png" file to "Image" filemanager
     And I press "Create badge"
-    And I follow "Related badges (0)"
+    And I select "Related badges (0)" from the "jump" singleselect
     And I should see "This badge does not have any related badges."
     And I press "Add related badge"
     And I follow "Related badges"
@@ -100,7 +97,7 @@ Feature: Add badges to the system
     When I press "Create badge"
     Then I should see "Edit details"
     And I should see "Endorsement"
-    And I follow "Endorsement"
+    And I select "Endorsement" from the "jump" singleselect
     And I set the following fields to these values:
       | Endorser name | Endorser |
       | Email | endorsement@example.com |
@@ -124,7 +121,7 @@ Feature: Add badges to the system
     When I press "Create badge"
     Then I should see "Test Badge"
     And I should see "Endorsement"
-    And I follow "Alignments (0)"
+    And I select "Alignments (0)" from the "jump" singleselect
     And I should see "This badge does not have any external skills or standards specified."
     And I press "Add external skill or standard"
     And I set the following fields to these values:
@@ -136,13 +133,14 @@ Feature: Add badges to the system
 
   @javascript @_file_upload
   Scenario: Add a badge from Site badges section
-    Given I press "Customise this page"
+    Given I turn editing mode on
+    And the following config values are set as admin:
+      | unaddableblocks | | theme_boost|
     # TODO MDL-57120 site "Badges" link not accessible without navigation block.
     And I add the "Navigation" block if not present
     When I click on "Site pages" "list_item" in the "Navigation" "block"
     And I click on "Site badges" "link" in the "Navigation" "block"
-    Then I should see "Manage badges"
-    And I should see "Add a new badge"
+    Then I should see "Add a new badge"
     # Add a badge.
     When I press "Add a new badge"
     And I set the following fields to these values:
@@ -160,12 +158,40 @@ Feature: Add badges to the system
     And I should see "Related badges (0)"
     And I should see "Alignments (0)"
     And I should not see "Create badge"
-    And I follow "Manage badges"
-    And I should see "Number of badges available: 1"
-    And I should not see "There are no badges available."
+    And I navigate to "Badges > Manage badges" in site administration
+    And I should not see "There are currently no badges available for users to earn."
     # See buttons from the "Site badges" page.
     And I am on homepage
     When I click on "Site pages" "list_item" in the "Navigation" "block"
     And I click on "Site badges" "link" in the "Navigation" "block"
     Then I should see "Manage badges"
     And I should see "Add a new badge"
+
+  @javascript @_file_upload
+  Scenario: Edit a badge
+    Given I navigate to "Badges > Badges settings" in site administration
+    And I set the field "Badge issuer name" to "Test Badge Site"
+    And I set the field "Badge issuer email address" to "testuser@example.com"
+    And I press "Save changes"
+    And I navigate to "Badges > Add a new badge" in site administration
+    And I set the following fields to these values:
+      | Name | Test badge with 'apostrophe' and other friends (<>&@#) |
+      | Version | firstversion |
+      | Language | English |
+      | Description | Test badge description |
+      | Image author | http://author.example.com |
+      | Image caption | Test caption image |
+    And I upload "badges/tests/behat/badge.png" file to "Image" filemanager
+    And I press "Create badge"
+    When I select "Edit details" from the "jump" singleselect
+    And I should see "Test badge with 'apostrophe' and other friends (&@#)"
+    And I should not see "Issuer details"
+    And I set the following fields to these values:
+      | Name | Test badge renamed |
+      | Version | secondversion |
+    And I press "Save changes"
+    And I select "Overview" from the "jump" singleselect
+    Then I should not see "Test badge with 'apostrophe' and other friends (&@#)"
+    And I should not see "firstversion"
+    And I should see "Test badge renamed"
+    And I should see "secondversion"

@@ -22,6 +22,9 @@
  * @copyright  2020 Sara Arjona <sara@moodle.com>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
+
+use core_contentbank\content;
+
 defined('MOODLE_INTERNAL') || die();
 
 global $CFG;
@@ -45,10 +48,13 @@ class core_contentbank_generator extends \component_generator_base {
      * @param context $context The context where the content will be created.
      * @param bool $convert2class Whether the class should return stdClass or plugin instance.
      * @param string $filepath The filepath of the file associated to the content to create.
+     * @param string $contentname The name of the content that will be created.
+     * @param int $visibility The visibility of the content that will be created.
      * @return array An array with all the records added to the content bank.
      */
     public function generate_contentbank_data(?string $contenttype, int $itemstocreate = 1, int $userid = 0,
-            ?\context $context = null, bool $convert2class = true, string $filepath = 'contentfile.h5p'): array {
+            ?\context $context = null, bool $convert2class = true, string $filepath = 'contentfile.h5p',
+            string $contentname = 'Test content ', int $visibility = content::VISIBILITY_PUBLIC): array {
         global $DB, $USER;
 
         $records = [];
@@ -67,9 +73,11 @@ class core_contentbank_generator extends \component_generator_base {
         for ($i = 0; $i < $itemstocreate; $i++) {
             // Create content.
             $record = new stdClass();
-            $record->name = 'Test content ' . $i;
+            // If only 1 item is being created, do not add a number suffix to the content name.
+            $record->name = ($itemstocreate === 1) ? $contentname : $contentname . $i;
             $record->configdata = '';
             $record->usercreated = $userid ?? $USER->id;
+            $record->visibility = $visibility;
 
             $content = $type->create_content($record);
             $record = $content->get_content();

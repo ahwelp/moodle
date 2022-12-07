@@ -488,7 +488,7 @@ class repository_type implements cacheable_object {
  * This is the base class of the repository class.
  *
  * To create repository plugin, see: {@link http://docs.moodle.org/dev/Repository_plugins}
- * See an example: {@link repository_boxnet}
+ * See an example: repository_dropbox
  *
  * @package   core_repository
  * @copyright 2009 Dongsheng Cai {@link http://dongsheng.org}
@@ -890,7 +890,7 @@ abstract class repository implements cacheable_object {
         // the file needs to copied to draft area
         $stored_file = self::get_moodle_file($source);
         if ($maxbytes != -1 && $stored_file->get_filesize() > $maxbytes) {
-            $maxbytesdisplay = display_size($maxbytes);
+            $maxbytesdisplay = display_size($maxbytes, 0);
             throw new file_exception('maxbytesfile', (object) array('file' => $filerecord['filename'],
                                                                     'size' => $maxbytesdisplay));
         }
@@ -1012,10 +1012,17 @@ abstract class repository implements cacheable_object {
         global $DB, $CFG, $USER;
 
         // Fill $args attributes with default values unless specified
-        if (!isset($args['currentcontext']) || !($args['currentcontext'] instanceof context)) {
-            $current_context = context_system::instance();
+        if (isset($args['currentcontext'])) {
+            if ($args['currentcontext'] instanceof context) {
+                $current_context = $args['currentcontext'];
+            } else {
+                debugging('currentcontext passed to repository::get_instances was ' .
+                        'not a context object. Using system context instead, but ' .
+                        'you should probably fix your code.', DEBUG_DEVELOPER);
+                $current_context = context_system::instance();
+            }
         } else {
-            $current_context = $args['currentcontext'];
+            $current_context = context_system::instance();
         }
         $args['currentcontext'] = $current_context->id;
         $contextids = array();
@@ -1728,7 +1735,7 @@ abstract class repository implements cacheable_object {
             // files that are references to local files are already in moodle filepool
             // just validate the size
             if ($maxbytes > 0 && $file->get_filesize() > $maxbytes) {
-                $maxbytesdisplay = display_size($maxbytes);
+                $maxbytesdisplay = display_size($maxbytes, 0);
                 throw new file_exception('maxbytesfile', (object) array('file' => $file->get_filename(),
                                                                         'size' => $maxbytesdisplay));
             }
@@ -1736,7 +1743,7 @@ abstract class repository implements cacheable_object {
         } else {
             if ($maxbytes > 0 && $file->get_filesize() > $maxbytes) {
                 // note that stored_file::get_filesize() also calls synchronisation
-                $maxbytesdisplay = display_size($maxbytes);
+                $maxbytesdisplay = display_size($maxbytes, 0);
                 throw new file_exception('maxbytesfile', (object) array('file' => $file->get_filename(),
                                                                         'size' => $maxbytesdisplay));
             }
@@ -2139,12 +2146,9 @@ abstract class repository implements cacheable_object {
      * @param array $value
      * @return bool
      */
-    public function filter(&$value) {
+    public function filter($value) {
         $accepted_types = optional_param_array('accepted_types', '', PARAM_RAW);
         if (isset($value['children'])) {
-            if (!empty($value['children'])) {
-                $value['children'] = array_filter($value['children'], array($this, 'filter'));
-            }
             return true; // always return directories
         } else {
             if ($accepted_types == '*' or empty($accepted_types)
@@ -3115,21 +3119,14 @@ final class repository_type_form extends moodleform {
  *          accepted_types
  */
 function initialise_filepicker($args) {
-    global $CFG, $USER, $PAGE, $OUTPUT;
+    global $CFG, $USER, $PAGE;
     static $templatesinitialized = array();
     require_once($CFG->libdir . '/licenselib.php');
 
     $return = new stdClass();
-    $licenses = array();
-    if (!empty($CFG->licenses)) {
-        $array = explode(',', $CFG->licenses);
-        foreach ($array as $license) {
-            $l = new stdClass();
-            $l->shortname = $license;
-            $l->fullname = get_string($license, 'license');
-            $licenses[] = $l;
-        }
-    }
+
+    $licenses = license_manager::get_licenses();
+
     if (!empty($CFG->sitedefaultlicense)) {
         $return->defaultlicense = $CFG->sitedefaultlicense;
     }
@@ -3172,6 +3169,8 @@ function initialise_filepicker($args) {
     } else {
         $return->externallink = true;
     }
+
+    $return->rememberuserlicensepref = (bool) get_config(null, 'rememberuserlicensepref');
 
     $return->userprefs = array();
     $return->userprefs['recentrepository'] = get_user_preferences('filepicker_recentrepository', '');
@@ -3272,7 +3271,7 @@ function repository_download_selected_files($context, string $component, string 
     $filestoarchive = [];
 
     foreach ($files as $selectedfile) {
-        $filename = clean_filename($selectedfile->filename); // Default to '.' for root.
+        $filename = $selectedfile->filename ? clean_filename($selectedfile->filename) : '.'; // Default to '.' for root.
         $filepath = clean_param($selectedfile->filepath, PARAM_PATH); // Default to '/' for downloadall.
         $filepath = file_correct_filepath($filepath);
         $area = file_get_draft_area_info($itemid, $filepath);
@@ -3284,7 +3283,9 @@ function repository_download_selected_files($context, string $component, string 
         // If it is empty we are downloading a directory.
         $archivefile = $storedfile->get_filename();
         if (!$filename || $filename == '.' ) {
-            $archivefile = $filepath;
+            $foldername = explode('/', trim($filepath, '/'));
+            $folder = trim(array_pop($foldername), '/');
+            $archivefile = $folder ?? '/';
         }
 
         $filestoarchive[$archivefile] = $storedfile;

@@ -50,23 +50,10 @@ class helper {
      */
     public static function save_h5p(factory $factory, \stored_file $file, \stdClass $config, bool $onlyupdatelibs = false,
             bool $skipcontent = false) {
-        // This may take a long time.
-        \core_php_time_limit::raise();
 
-        $core = $factory->get_core();
-        $core->h5pF->set_file($file);
-        $path = $core->fs->getTmpPath();
-        $core->h5pF->getUploadedH5pFolderPath($path);
-        // Add manually the extension to the file to avoid the validation fails.
-        $path .= '.h5p';
-        $core->h5pF->getUploadedH5pPath($path);
-
-        // Copy the .h5p file to the temporary folder.
-        $file->copy_content_to($path);
-
-        // Check if the h5p file is valid before saving it.
-        $h5pvalidator = $factory->get_validator();
-        if ($h5pvalidator->isValidPackage($skipcontent, $onlyupdatelibs)) {
+        if (api::is_valid_package($file, $onlyupdatelibs, $skipcontent, $factory, false)) {
+            $core = $factory->get_core();
+            $h5pvalidator = $factory->get_validator();
             $h5pstorage = $factory->get_storage();
 
             $content = [
@@ -75,10 +62,15 @@ class helper {
             ];
             $options = ['disable' => self::get_display_options($core, $config)];
 
+            // Add the 'title' if exists from 'h5p.json' data to keep it for the editor.
+            if (!empty($h5pvalidator->h5pC->mainJsonData['title'])) {
+                $content['title'] = $h5pvalidator->h5pC->mainJsonData['title'];
+            }
             $h5pstorage->savePackage($content, null, $skipcontent, $options);
 
             return $h5pstorage->contentId;
         }
+
         return false;
     }
 
@@ -339,7 +331,11 @@ class helper {
         $core = $factory->get_core();
 
         // When there is a logged in user, her information will be passed to the player. It will be used for tracking.
-        $usersettings = isloggedin() ? ['name' => $USER->username, 'mail' => $USER->email] : [];
+        $usersettings = [];
+        if (isloggedin()) {
+            $usersettings['name'] = $USER->username;
+            $usersettings['id'] = $USER->id;
+        }
         $settings = array(
             'baseUrl' => $basepath,
             'url' => "{$basepath}pluginfile.php/{$systemcontext->instanceid}/core_h5p",
@@ -350,12 +346,12 @@ class helper {
             'siteUrl' => $CFG->wwwroot,
             'l10n' => array('H5P' => $core->getLocalization()),
             'user' => $usersettings,
-            'hubIsEnabled' => true,
+            'hubIsEnabled' => false,
             'reportingIsEnabled' => false,
-            'crossorigin' => null,
+            'crossorigin' => !empty($CFG->h5pcrossorigin) ? $CFG->h5pcrossorigin : null,
             'libraryConfig' => $core->h5pF->getLibraryConfig(),
             'pluginCacheBuster' => self::get_cache_buster(),
-            'libraryUrl' => autoloader::get_h5p_core_library_url('core/js')
+            'libraryUrl' => autoloader::get_h5p_core_library_url('js')->out(),
         );
 
         return $settings;
@@ -417,6 +413,8 @@ class helper {
      * @return array The JS array converted to PHP array.
      */
     public static function parse_js_array(string $jscontent): array {
+        // Convert all line-endings to UNIX format first.
+        $jscontent = str_replace(array("\r\n", "\r"), "\n", $jscontent);
         $jsarray = preg_split('/,\n\s+/', substr($jscontent, 0, -1));
         $jsarray = preg_replace('~{?\\n~', '', $jsarray);
 
@@ -428,5 +426,51 @@ class helper {
         }
 
         return $strings;
+    }
+
+    /**
+     * Get the information related to the H5P export file.
+     * The information returned will be:
+     * - filename, filepath, mimetype, filesize, timemodified and fileurl.
+     *
+     * @param  string $exportfilename The H5P export filename (with slug).
+     * @param  \moodle_url $url The URL of the exported file.
+     * @param  factory $factory The \core_h5p\factory object
+     * @return array|null The information export file otherwise null.
+     */
+    public static function get_export_info(string $exportfilename, \moodle_url $url = null, ?factory $factory = null): ?array {
+
+        if (!$factory) {
+            $factory = new factory();
+        }
+        $core = $factory->get_core();
+
+        // Get export file.
+        if (!$fileh5p = $core->fs->get_export_file($exportfilename)) {
+            return null;
+        }
+
+        // Build the export info array.
+        $file = [];
+        $file['filename'] = $fileh5p->get_filename();
+        $file['filepath'] = $fileh5p->get_filepath();
+        $file['mimetype'] = $fileh5p->get_mimetype();
+        $file['filesize'] = $fileh5p->get_filesize();
+        $file['timemodified'] = $fileh5p->get_timemodified();
+
+        if (!$url) {
+            $url  = \moodle_url::make_webservice_pluginfile_url(
+                $fileh5p->get_contextid(),
+                $fileh5p->get_component(),
+                $fileh5p->get_filearea(),
+                '',
+                '',
+                $fileh5p->get_filename()
+            );
+        }
+
+        $file['fileurl'] = $url->out(false);
+
+        return $file;
     }
 }

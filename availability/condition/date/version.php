@@ -24,6 +24,6 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->version = 2019111800;
-$plugin->requires = 2019111200;
+$plugin->version = 2022112800;
+$plugin->requires = 2022111800;
 $plugin->component = 'availability_date';

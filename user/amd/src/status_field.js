@@ -280,7 +280,8 @@ const submitEditFormAjax = (clickedLink, getBody, modal, userEnrolmentId, userDa
         return data;
     })
     .then(() => {
-        DynamicTable.refreshTableContent(getDynamicTableFromLink(clickedLink));
+        DynamicTable.refreshTableContent(getDynamicTableFromLink(clickedLink))
+        .catch(Notification.exception);
 
         return Str.get_string('enrolmentupdatedforuser', 'core_enrol', userData);
     })
@@ -321,7 +322,8 @@ const submitUnenrolFormAjax = (clickedLink, modal, args, userData) => {
         return data;
     })
     .then(() => {
-        DynamicTable.refreshTableContent(getDynamicTableFromLink(clickedLink));
+        DynamicTable.refreshTableContent(getDynamicTableFromLink(clickedLink))
+        .catch(Notification.exception);
 
         return Str.get_string('unenrolleduser', 'core_enrol', userData);
     })
@@ -354,8 +356,9 @@ const getBody = (contextId, ueid, formdata = null) => Fragment.loadFragment(
 /**
  * Initialise the statu field handler.
  *
- * @param {Number} contextid
- * @param {Number} uniqueid
+ * @param {object} param
+ * @param {Number} param.contextid
+ * @param {Number} param.uniqueid
  */
 export const init = ({contextid, uniqueid}) => {
     registerEventListeners(contextid, uniqueid);

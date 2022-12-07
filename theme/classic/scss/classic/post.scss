@@ -10,6 +10,7 @@
         .region-main {
             flex: 0 0 100%;
             padding: 0 1rem;
+            max-width: 100%;
         }
 
         &.blocks-pre {
@@ -23,6 +24,14 @@
                 flex: 0 0 $mainwidth-oneblock;
                 max-width: $mainwidth-oneblock;
                 padding: 0 1rem 0 0;
+                #region-main {
+                    border: $card-border-width solid $card-border-color;
+                    padding: $card-spacer-x;
+
+                    @if $enable-rounded {
+                        @include border-radius($card-border-radius);
+                    }
+                }
             }
         }
         &.blocks-post {
@@ -107,11 +116,22 @@
     }
 }
 
+.path-grade-report-grader .gradeparent {
+    tr.heading {
+        top: $navbar-height;
+    }
+
+    th.header {
+        left: 0;
+    }
+}
+
 // The block column needs some padding on small devices.
 @include media-breakpoint-down(sm) {
     .blockcolumn,
     .region-main {
         flex: 0 0 100%;
+        max-width: 100%;
         padding: 0 1rem;
         margin-bottom: 1rem;
     }
@@ -130,11 +150,64 @@
     @include page_layout(20%);
 }
 
-.block_myoverview,
-.block_recentlyaccesseditems {
-    .dashboard-card-deck {
-        .dashboard-card {
+@media print {
+    #page-content .region-main, {
+        max-width: 100% !important; /* stylelint-disable-line declaration-no-important */
+        flex: 0 0 100% !important; /* stylelint-disable-line declaration-no-important */
+        padding: 0 1rem 0 !important; /* stylelint-disable-line declaration-no-important */
+    }
+}
+
+@include media-breakpoint-up(sm) {
+    .dashboard-card-deck:not(.fixed-width-cards) .dashboard-card {
+        width: calc(50% - #{$card-gutter});
+    }
+}
+
+@include media-breakpoint-up(md) {
+    .dashboard-card-deck:not(.fixed-width-cards) .dashboard-card {
+        width: calc(50% - #{$card-gutter});
+    }
+    .blocks-post,
+    .blocks-pre {
+        .dashboard-card-deck .dashboard-card {
+            width: calc(100% - #{$card-gutter});
+        }
+    }
+}
+
+@include media-breakpoint-up(lg) {
+    .dashboard-card-deck:not(.fixed-width-cards) .dashboard-card {
+        width: calc(33.33% - #{$card-gutter});
+    }
+    .blocks-post,
+    .blocks-pre {
+        .dashboard-card-deck .dashboard-card {
+            width: calc(50% - #{$card-gutter});
+        }
+    }
+}
+
+@include media-breakpoint-up(xl) {
+    .dashboard-card-deck:not(.fixed-width-cards) .dashboard-card {
+        width: calc(25% - #{$card-gutter});
+    }
+    .blocks-post,
+    .blocks-pre {
+        .dashboard-card-deck .dashboard-card {
             width: calc(33.33% - #{$card-gutter});
+        }
+    }
+}
+
+@media (min-width: 1360px) {
+    .dashboard-card-deck:not(.fixed-width-cards) .dashboard-card {
+        width: calc(20% - #{$card-gutter});
+    }
+    .blocks-post,
+    .blocks-pre {
+        .dashboard-card-deck .dashboard-card {
+            width: calc(25% - #{$card-gutter});
         }
     }
 }
@@ -189,4 +262,13 @@
     #settingsnav {
         padding-top: 0 !important; /* stylelint-disable-line declaration-no-important */
     }
+}
+
+#page-footer {
+    padding-top: $spacer * .5;
+    padding-bottom: $spacer * .5;
+}
+
+body.hasstickyfooter #page-footer {
+    padding-bottom: calc(#{$spacer} * .5 + #{$navbar-height});
 }

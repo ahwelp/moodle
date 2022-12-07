@@ -25,6 +25,8 @@
 
 use core_h5p\local\library\autoloader;
 use core_h5p\core;
+use core_h5p\player;
+use core_h5p\factory;
 
 defined('MOODLE_INTERNAL') || die();
 
@@ -37,6 +39,13 @@ defined('MOODLE_INTERNAL') || die();
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class core_h5p_generator extends \component_generator_base {
+
+    /** Url pointing to webservice plugin file. */
+    public const WSPLUGINFILE = 0;
+    /** Url pointing to token plugin file. */
+    public const TOKENPLUGINFILE = 1;
+    /** Url pointing to plugin file. */
+    public const PLUGINFILE = 2;
 
     /**
      * Convenience function to create a file.
@@ -164,10 +173,11 @@ class core_h5p_generator extends \component_generator_base {
      */
     public function generate_h5p_data(bool $createlibraryfiles = false): stdClass {
         // Create libraries.
-        $mainlib = $libraries[] = $this->create_library_record('MainLibrary', 'Main Lib', 1, 0);
-        $lib1 = $libraries[] = $this->create_library_record('Library1', 'Lib1', 2, 0);
-        $lib2 = $libraries[] = $this->create_library_record('Library2', 'Lib2', 2, 1);
-        $lib3 = $libraries[] = $this->create_library_record('Library3', 'Lib3', 3, 2);
+        $mainlib = $libraries[] = $this->create_library_record('MainLibrary', 'Main Lib', 1, 0, 1, '', null,
+            'http://tutorial.org', 'http://example.org');
+        $lib1 = $libraries[] = $this->create_library_record('Library1', 'Lib1', 2, 0, 1, '', null, null,  'http://example.org');
+        $lib2 = $libraries[] = $this->create_library_record('Library2', 'Lib2', 2, 1, 1, '', null, 'http://tutorial.org');
+        $lib3 = $libraries[] = $this->create_library_record('Library3', 'Lib3', 3, 2, 1, '', null, null, null, true, 0);
         $lib4 = $libraries[] = $this->create_library_record('Library4', 'Lib4', 1, 1);
         $lib5 = $libraries[] = $this->create_library_record('Library5', 'Lib5', 1, 3);
 
@@ -239,26 +249,34 @@ class core_h5p_generator extends \component_generator_base {
      * @param int $patchversion The library's patch version
      * @param string $semantics Json describing the content structure for the library
      * @param string $addto The plugin configuration data
+     * @param string $tutorial The tutorial URL
+     * @param string $examlpe The example URL
+     * @param bool $enabled Whether the library is enabled or not
+     * @param int $runnable Whether the library is runnable (1) or not (0)
      * @return stdClass An object representing the added library record
      */
     public function create_library_record(string $machinename, string $title, int $majorversion = 1,
-            int $minorversion = 0, int $patchversion = 1, string $semantics = '', string $addto = null): stdClass {
+            int $minorversion = 0, int $patchversion = 1, string $semantics = '', string $addto = null,
+            string $tutorial = null, string $example = null, bool $enabled = true, int $runnable = 1): stdClass {
         global $DB;
 
-        $content = array(
+        $content = [
             'machinename' => $machinename,
             'title' => $title,
             'majorversion' => $majorversion,
             'minorversion' => $minorversion,
             'patchversion' => $patchversion,
-            'runnable' => 1,
+            'runnable' => $runnable,
             'fullscreen' => 1,
             'preloadedjs' => 'js/example.js',
             'preloadedcss' => 'css/example.css',
             'droplibrarycss' => '',
             'semantics' => $semantics,
-            'addto' => $addto
-        );
+            'addto' => $addto,
+            'tutorial' => $tutorial,
+            'example' => $example,
+            'enabled' => $enabled,
+        ];
 
         $libraryid = $DB->insert_record('h5p_libraries', $content);
 
@@ -405,6 +423,8 @@ class core_h5p_generator extends \component_generator_base {
      * @throws coding_exception
      */
     public function create_content_file(string $file, string $filearea, int $contentid = 0): stored_file {
+        global $USER;
+
         $filepath = '/'.dirname($file).'/';
         $filename = basename($file);
 
@@ -412,20 +432,147 @@ class core_h5p_generator extends \component_generator_base {
             throw new coding_exception('Files belonging to an H5P content must specify the H5P content id');
         }
 
+        if ($filearea === 'draft') {
+            $usercontext = \context_user::instance($USER->id);
+            $context = $usercontext->id;
+            $component = 'user';
+            $itemid = 0;
+        } else {
+            $systemcontext = context_system::instance();
+            $context = $systemcontext->id;
+            $component = \core_h5p\file_storage::COMPONENT;
+            $itemid = $contentid;
+        }
+
         $content = 'fake content';
 
-        $systemcontext = context_system::instance();
-
         $filerecord = array(
-            'contextid' => $systemcontext->id,
-            'component' => \core_h5p\file_storage::COMPONENT,
+            'contextid' => $context,
+            'component' => $component,
             'filearea'  => $filearea,
-            'itemid'    => ($filearea === 'editor') ? 0 : $contentid,
+            'itemid'    => $itemid,
             'filepath'  => $filepath,
             'filename'  => $filename,
         );
 
         $fs = new file_storage();
         return $fs->create_file_from_string($filerecord, $content);
+    }
+
+    /**
+     * Create a fake export H5P deployed file.
+     *
+     * @param string $filename Name of the H5P file to deploy.
+     * @param int $contextid Context id of the H5P activity.
+     * @param string $component component.
+     * @param string $filearea file area.
+     * @param int $typeurl Type of url to create the export url plugin file.
+     * @return array return deployed file information.
+     */
+    public function create_export_file(string $filename, int $contextid,
+        string $component,
+        string $filearea,
+        int $typeurl = self::WSPLUGINFILE): array {
+        global $CFG;
+
+        // We need the autoloader for H5P player.
+        autoloader::register();
+
+        $path = $CFG->dirroot.'/h5p/tests/fixtures/'.$filename;
+        $filerecord = [
+            'contextid' => $contextid,
+            'component' => $component,
+            'filearea'  => $filearea,
+            'itemid'    => 0,
+            'filepath'  => '/',
+            'filename'  => $filename,
+        ];
+        // Load the h5p file into DB.
+        $fs = get_file_storage();
+        if (!$fs->get_file($contextid, $component, $filearea, $filerecord['itemid'], $filerecord['filepath'], $filename)) {
+            $fs->create_file_from_pathname($filerecord, $path);
+        }
+
+        // Make the URL to pass to the player.
+        if ($typeurl == self::WSPLUGINFILE) {
+            $url = \moodle_url::make_webservice_pluginfile_url(
+                $filerecord['contextid'],
+                $filerecord['component'],
+                $filerecord['filearea'],
+                $filerecord['itemid'],
+                $filerecord['filepath'],
+                $filerecord['filename']
+            );
+        } else {
+            $includetoken = false;
+            if ($typeurl == self::TOKENPLUGINFILE) {
+                $includetoken = true;
+            }
+            $url = \moodle_url::make_pluginfile_url(
+                $filerecord['contextid'],
+                $filerecord['component'],
+                $filerecord['filearea'],
+                $filerecord['itemid'],
+                $filerecord['filepath'],
+                $filerecord['filename'],
+                false,
+                $includetoken
+            );
+        }
+
+        $config = new stdClass();
+        $h5pplayer = new player($url->out(false), $config);
+        // We need to add assets to page to create the export file.
+        $h5pplayer->add_assets_to_page();
+
+        // Call the method. We need the id of the new H5P content.
+        $rc = new \ReflectionClass(player::class);
+        $rcp = $rc->getProperty('h5pid');
+        $rcp->setAccessible(true);
+        $h5pid = $rcp->getValue($h5pplayer);
+
+        // Get the info export file.
+        $factory = new factory();
+        $core = $factory->get_core();
+        $content = $core->loadContent($h5pid);
+        $slug = $content['slug'] ? $content['slug'] . '-' : '';
+        $exportfilename = "{$slug}{$h5pid}.h5p";
+        $fileh5p = $core->fs->get_export_file($exportfilename);
+        $deployedfile = [];
+        $deployedfile['filename'] = $fileh5p->get_filename();
+        $deployedfile['filepath'] = $fileh5p->get_filepath();
+        $deployedfile['mimetype'] = $fileh5p->get_mimetype();
+        $deployedfile['filesize'] = $fileh5p->get_filesize();
+        $deployedfile['timemodified'] = $fileh5p->get_timemodified();
+
+        // Create the url depending the request was made through typeurl.
+        if ($typeurl == self::WSPLUGINFILE) {
+            $url  = \moodle_url::make_webservice_pluginfile_url(
+                $fileh5p->get_contextid(),
+                $fileh5p->get_component(),
+                $fileh5p->get_filearea(),
+                '',
+                '',
+                $fileh5p->get_filename()
+            );
+        } else {
+            $includetoken = false;
+            if ($typeurl == self::TOKENPLUGINFILE) {
+                $includetoken = true;
+            }
+            $url = \moodle_url::make_pluginfile_url(
+                $fileh5p->get_contextid(),
+                $fileh5p->get_component(),
+                $fileh5p->get_filearea(),
+                '',
+                '',
+                $fileh5p->get_filename(),
+                false,
+                $includetoken
+            );
+        }
+        $deployedfile['fileurl'] = $url->out(false);
+
+        return $deployedfile;
     }
 }

@@ -57,15 +57,13 @@ if (($hassiteconfig || has_any_capability(array(
             new lang_string('badgesalt_desc', 'badges'),
             'badges' . $SITE->timecreated, PARAM_ALPHANUM));
 
-    $backpacks = badges_get_site_backpacks();
-    $choices = array();
-    foreach ($backpacks as $backpack) {
-        $choices[$backpack->id] = $backpack->backpackweburl;
-    }
-
     $globalsettings->add(new admin_setting_configcheckbox('badges_allowcoursebadges',
             new lang_string('allowcoursebadges', 'badges'),
             new lang_string('allowcoursebadges_desc', 'badges'), 1));
+
+    $globalsettings->add(new admin_setting_configcheckbox('badges_allowexternalbackpack',
+            new lang_string('allowexternalbackpack', 'badges'),
+            new lang_string('allowexternalbackpack_desc', 'badges'), 1));
 
     $ADMIN->add('badges', $globalsettings);
 
@@ -93,27 +91,6 @@ if (($hassiteconfig || has_any_capability(array(
             array('moodle/badges:createbadge'), empty($CFG->enablebadges)
         )
     );
-    $backpacksettings = new admin_settingpage('backpacksettings', new lang_string('backpacksettings', 'badges'),
-            array('moodle/badges:manageglobalsettings'), empty($CFG->enablebadges));
-
-    $backpacksettings->add(new admin_setting_configcheckbox('badges_allowexternalbackpack',
-            new lang_string('allowexternalbackpack', 'badges'),
-            new lang_string('allowexternalbackpack_desc', 'badges'), 1));
-
-    $bp = $DB->get_record('badge_external_backpack', ['backpackweburl' => BADGRIO_BACKPACKWEBURL]);
-    $backpacksettings->add(new admin_setting_configselect('badges_site_backpack',
-            new lang_string('sitebackpack', 'badges'),
-            new lang_string('sitebackpack_help', 'badges'),
-            $bp->id, $choices));
-
-    $warning = badges_verify_site_backpack();
-    if (!empty($warning)) {
-        $backpacksettings->add(new admin_setting_description('badges_site_backpack_verify',
-            new lang_string('sitebackpackverify', 'badges'),
-            $warning));
-    }
-
-    $ADMIN->add('badges', $backpacksettings);
 
     $ADMIN->add('badges',
         new admin_externalpage('managebackpacks',

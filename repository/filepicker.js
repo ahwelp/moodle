@@ -260,13 +260,18 @@ YUI.add('moodle-core_filepicker', function(Y) {
                 // manually call dynload for parent elements in the tree so we can load other siblings
                 if (options.dynload) {
                     var root = scope.treeview.getRoot();
+                    // Whether search results are currently displayed in the active repository in the filepicker.
+                    // We do not want to load siblings of parent elements when displaying search tree results.
+                    var isSearchResult = typeof options.callbackcontext.active_repo !== 'undefined' &&
+                        options.callbackcontext.active_repo.issearchresult;
                     while (root && root.children && root.children.length) {
                         root = root.children[0];
                         if (root.path == mytreeel.path) {
                             root.origpath = options.filepath;
                             root.origlist = fileslist;
+                        } else if (!root.isLeaf && root.expanded && !isSearchResult) {
+                            Y.bind(options.treeview_dynload, options.callbackcontext)(root, null);
                         }
-                        // Removed bind as of MDL-62415 as it overwrites the search tree results
                     }
                 }
             } else {
@@ -284,6 +289,12 @@ YUI.add('moodle-core_filepicker', function(Y) {
                 }
                 Y.bind(callback, options.callbackcontext)(e, e.node.fileinfo);
                 Y.YUI2.util.Event.stopEvent(e.event)
+            });
+            // Simulate click on file not folder.
+            scope.treeview.subscribe('enterKeyPressed', function(node) {
+                if (node.children.length === 0) {
+                    Y.one(node.getContentEl()).one('a').simulate('click');
+                }
             });
             // TODO MDL-32736 support right click
             /*if (options.rightclickcallback) {
@@ -1149,7 +1160,7 @@ M.core_filepicker.init = function(Y, options) {
             }, false);
         },
         select_file: function(args) {
-            var argstitle = args.title;
+            var argstitle = args.shorttitle ? args.shorttitle : args.title;
             // Limit the string length so it fits nicely on mobile devices
             var titlelength = 30;
             if (argstitle.length > titlelength) {
@@ -1201,7 +1212,7 @@ M.core_filepicker.init = function(Y, options) {
 
             // TODO MDL-32532: attributes 'hasauthor' and 'haslicense' need to be obsolete,
             selectnode.one('.fp-setauthor input').set('value', args.author ? args.author : this.options.author);
-            this.set_selected_license(selectnode.one('.fp-setlicense'), args.license);
+            this.populateLicensesSelect(selectnode.one('.fp-setlicense select'), args);
             selectnode.one('form #filesource-'+client_id).set('value', args.source);
             selectnode.one('form #filesourcekey-'+client_id).set('value', args.sourcekey);
 
@@ -1219,6 +1230,7 @@ M.core_filepicker.init = function(Y, options) {
             var client_id = this.options.client_id;
             var selectnode = this.selectnode;
             var getfile = selectnode.one('.fp-select-confirm');
+            var filePickerHelper = this;
             // bind labels with corresponding inputs
             selectnode.all('.fp-saveas,.fp-linktype-2,.fp-linktype-1,.fp-linktype-4,fp-linktype-8,.fp-setauthor,.fp-setlicense').each(function (node) {
                 node.all('label').set('for', node.one('input,select').generateID());
@@ -1234,12 +1246,33 @@ M.core_filepicker.init = function(Y, options) {
                         node.addClassIf('uneditable', !allowinputs);
                         node.all('input,select').set('disabled', allowinputs?'':'disabled');
                     });
+
+                    // If the link to the file is selected, only then.
+                    // Remember: this is not to be done for all repos.
+                    // Only for those repos where the filereferencewarning is set.
+                    // The value 4 represents FILE_REFERENCE here.
+                    if (e.currentTarget.get('value') === '4') {
+                        var filereferencewarning = filePickerHelper.active_repo.filereferencewarning;
+                        if (filereferencewarning) {
+                            var fileReferenceNode = e.currentTarget.ancestor('.fp-linktype-4');
+                            var fileReferenceWarningNode = Y.Node.create('<div/>').
+                                addClass('alert alert-warning px-3 py-1 my-1 small').
+                                setAttrs({role: 'alert'}).
+                                setContent(filereferencewarning);
+                            fileReferenceNode.append(fileReferenceWarningNode);
+                        }
+                    } else {
+                        var fileReferenceInput = selectnode.one('.fp-linktype-4 input');
+                        var fileReferenceWarningNode = fileReferenceInput.ancestor('.fp-linktype-4').one('.alert-warning');
+                        if (fileReferenceWarningNode) {
+                            fileReferenceWarningNode.remove();
+                        }
+                    }
                 }
             };
             selectnode.all('.fp-linktype-2,.fp-linktype-1,.fp-linktype-4,.fp-linktype-8').each(function (node) {
                 node.one('input').on('change', changelinktype, this);
             });
-            this.populate_licenses_select(selectnode.one('.fp-setlicense select'));
             // register event on clicking submit button
             getfile.on('click', function(e) {
                 e.preventDefault();
@@ -1257,7 +1290,9 @@ M.core_filepicker.init = function(Y, options) {
                     if (origlicense) {
                         origlicense = origlicense.getContent();
                     }
-                    this.set_preference('recentlicense', license.get('value'));
+                    if (this.options.rememberuserlicensepref) {
+                        this.set_preference('recentlicense', license.get('value'));
+                    }
                 }
                 params['author'] = selectnode.one('.fp-setauthor input').get('value');
 
@@ -1416,7 +1451,9 @@ M.core_filepicker.init = function(Y, options) {
                 width        : width+'px',
                 responsiveWidth : 768,
                 height       : '558px',
-                zIndex       : this.options.zIndex
+                zIndex       : this.options.zIndex,
+                focusOnPreviousTargetAfterHide: true,
+                focusAfterHide: this.options.previousActiveElement
             });
 
             // create panel for selecting a file (initially hidden)
@@ -1566,6 +1603,8 @@ M.core_filepicker.init = function(Y, options) {
             this.active_repo.message = (data.message || '');
             this.active_repo.help = data.help?data.help:null;
             this.active_repo.manage = data.manage?data.manage:null;
+            // Warning message related to the file reference option, if applicable to the given repository.
+            this.active_repo.filereferencewarning = data.filereferencewarning ? data.filereferencewarning : null;
             this.print_header();
         },
         print_login: function(data) {
@@ -1767,37 +1806,30 @@ M.core_filepicker.init = function(Y, options) {
                 callback: this.display_response
             }, true);
         },
-        populate_licenses_select: function(node) {
-            if (!node) {
+        populateLicensesSelect: function(licensenode, filenode) {
+            if (!licensenode) {
                 return;
             }
-            node.setContent('');
-            var licenses = this.options.licenses;
-            var recentlicense = this.get_preference('recentlicense');
-            if (recentlicense) {
-                this.options.defaultlicense=recentlicense;
+            licensenode.setContent('');
+            var selectedlicense = this.options.defaultlicense;
+            if (filenode) {
+                // File has a license already, use it.
+                selectedlicense = filenode.license;
+            } else if (this.options.rememberuserlicensepref && this.get_preference('recentlicense')) {
+                // When 'Remember user licence preference' is enabled use the last license selected by the user, if any.
+                selectedlicense = this.get_preference('recentlicense');
             }
+            var licenses = this.options.licenses;
             for (var i in licenses) {
-                var option = Y.Node.create('<option/>').
-                    set('selected', (this.options.defaultlicense==licenses[i].shortname)).
+                // Include the file's current license, even if not enabled, to prevent displaying
+                // misleading information about which license the file currently has assigned to it.
+                if (licenses[i].enabled == true || (filenode !== undefined && licenses[i].shortname === filenode.license)) {
+                    var option = Y.Node.create('<option/>').
+                    set('selected', (licenses[i].shortname == selectedlicense)).
                     set('value', licenses[i].shortname).
                     setContent(Y.Escape.html(licenses[i].fullname));
-                node.appendChild(option)
-            }
-        },
-        set_selected_license: function(node, value) {
-            var licenseset = false;
-            node.all('option').each(function(el) {
-                if (el.get('value')==value || el.getContent()==value) {
-                    el.set('selected', true);
-                    licenseset = true;
+                    licensenode.appendChild(option);
                 }
-            });
-            if (!licenseset) {
-                // we did not find the value in the list
-                var recentlicense = this.get_preference('recentlicense');
-                node.all('option[selected]').set('selected', false);
-                node.all('option[value='+recentlicense+']').set('selected', true);
             }
         },
         create_object_container: function(data) {
@@ -1828,7 +1860,7 @@ M.core_filepicker.init = function(Y, options) {
             content.one('.fp-saveas input').set('name', 'title');
             content.one('.fp-setauthor input').setAttrs({name:'author', value:this.options.author});
             content.one('.fp-setlicense select').set('name', 'license');
-            this.populate_licenses_select(content.one('.fp-setlicense select'))
+            this.populateLicensesSelect(content.one('.fp-setlicense select'));
             // append hidden inputs to the upload form
             content.one('form').appendChild(Y.Node.create('<input/>').
                 setAttrs({type:'hidden',name:'itemid',value:this.options.itemid}));
@@ -1843,7 +1875,9 @@ M.core_filepicker.init = function(Y, options) {
                 e.preventDefault();
                 var license = content.one('.fp-setlicense select');
 
-                this.set_preference('recentlicense', license.get('value'));
+                if (this.options.rememberuserlicensepref) {
+                    this.set_preference('recentlicense', license.get('value'));
+                }
                 if (!content.one('.fp-file input').get('value')) {
                     scope.print_msg(M.util.get_string('nofilesattached', 'repository'), 'error');
                     return false;

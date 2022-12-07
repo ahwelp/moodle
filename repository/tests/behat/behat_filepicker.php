@@ -28,6 +28,7 @@
 require_once(__DIR__ . '/../../../lib/behat/core_behat_file_helper.php');
 
 use Behat\Mink\Exception\ExpectationException as ExpectationException,
+    Behat\Mink\Exception\ElementNotFoundException as ElementNotFoundException,
     Behat\Gherkin\Node\TableNode as TableNode;
 
 /**
@@ -171,9 +172,7 @@ class behat_filepicker extends behat_base {
         $this->perform_on_element('delete', $exception);
 
         // Yes, we are sure.
-        // Using xpath + click instead of pressButton as 'Ok' it is a common string.
-        $okbutton = $this->find('css', 'div.fp-dlg button.fp-dlg-butconfirm');
-        $okbutton->click();
+        $this->execute('behat_general::i_click_on_in_the', [get_string('ok'), 'button', get_string('confirm'), 'dialogue']);
     }
 
     /**
@@ -342,7 +341,12 @@ class behat_filepicker extends behat_base {
             "//div[contains(concat(' ', normalize-space(@class), ' '), ' fp-content ')]" .
             "//a[contains(concat(' ', normalize-space(@class), ' '), ' fp-file ')]";
 
-        $elements = $this->find_all('xpath', $xpath);
+        try {
+            $elements = $this->find_all('xpath', $xpath);
+        } catch (ElementNotFoundException $e) {
+            $elements = [];
+        }
+
         // Make sure the expected number is equal to the actual number of .fp-file elements.
         if (count($elements) != $expectedcount) {
             throw new ExpectationException("Found " . count($elements) .

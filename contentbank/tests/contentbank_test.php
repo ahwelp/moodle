@@ -31,6 +31,7 @@ use advanced_testcase;
 use context_course;
 use context_coursecat;
 use context_system;
+use Exception;
 
 global $CFG;
 require_once($CFG->dirroot . '/contentbank/tests/fixtures/testable_contenttype.php');
@@ -45,7 +46,7 @@ require_once($CFG->dirroot . '/contentbank/tests/fixtures/testable_content.php')
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  * @coversDefaultClass \core_contentbank\contentbank
  */
-class core_contentbank_testcase extends advanced_testcase {
+class contentbank_test extends advanced_testcase {
 
     /**
      * Setup to ensure that fixtures are loaded.
@@ -112,14 +113,14 @@ class core_contentbank_testcase extends advanced_testcase {
         $this->resetAfterTest();
 
         $cb = new contentbank();
-        $expectedsupporters = [$extension => $expected];
 
         $systemcontext = context_system::instance();
 
         // All contexts allowed for admins.
         $this->setAdminUser();
         $contextsupporters = $cb->load_context_supported_extensions($systemcontext);
-        $this->assertEquals($expectedsupporters, $contextsupporters);
+        $this->assertArrayHasKey($extension, $contextsupporters);
+        $this->assertEquals($expected, $contextsupporters[$extension]);
     }
 
     /**
@@ -161,7 +162,6 @@ class core_contentbank_testcase extends advanced_testcase {
         $this->resetAfterTest();
 
         $cb = new contentbank();
-        $expectedsupporters = [$extension => $expected];
 
         $course = $this->getDataGenerator()->create_course();
         $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
@@ -170,7 +170,8 @@ class core_contentbank_testcase extends advanced_testcase {
 
         // Teachers has permission in their context to upload supported by H5P content type.
         $contextsupporters = $cb->load_context_supported_extensions($coursecontext);
-        $this->assertEquals($expectedsupporters, $contextsupporters);
+        $this->assertArrayHasKey($extension, $contextsupporters);
+        $this->assertEquals($expected, $contextsupporters[$extension]);
     }
 
     /**
@@ -205,9 +206,10 @@ class core_contentbank_testcase extends advanced_testcase {
      */
     public function test_search_contents(?string $search, string $where, int $expectedresult, array $contexts = [],
             array $contenttypes = null): void {
-        global $DB;
+        global $DB, $CFG;
 
         $this->resetAfterTest();
+        $this->setAdminUser();
 
         // Create users.
         $managerroleid = $DB->get_field('role', 'id', ['shortname' => 'manager']);
@@ -229,11 +231,12 @@ class core_contentbank_testcase extends advanced_testcase {
         }
 
         // Add some content to the content bank.
+        $filepath = $CFG->dirroot . '/h5p/tests/fixtures/filltheblanks.h5p';
         $generator = $this->getDataGenerator()->get_plugin_generator('core_contentbank');
         foreach ($contexts as $context) {
             $contextinstance = $existingcontexts[$context];
             $records = $generator->generate_contentbank_data('contenttype_h5p', 3,
-                $manager->id, $contextinstance, false);
+                $manager->id, $contextinstance, false, $filepath);
         }
 
         // Search for some content.
@@ -243,7 +246,7 @@ class core_contentbank_testcase extends advanced_testcase {
         $this->assertCount($expectedresult, $contents);
         if (!empty($contents) && !empty($search)) {
             foreach ($contents as $content) {
-                $this->assertContains($search, $content->get_name());
+                $this->assertStringContainsString($search, $content->get_name());
             }
         }
     }
@@ -356,12 +359,12 @@ class core_contentbank_testcase extends advanced_testcase {
      * @covers ::create_content_from_file
      */
     public function test_create_content_from_file() {
-        global $USER;
+        global $USER, $CFG;
 
         $this->resetAfterTest();
         $this->setAdminUser();
         $systemcontext = \context_system::instance();
-        $name = 'dummy_h5p.h5p';
+        $name = 'greeting-card-887.h5p';
 
         // Create a dummy H5P file.
         $dummyh5p = array(
@@ -373,8 +376,8 @@ class core_contentbank_testcase extends advanced_testcase {
             'filename' => $name,
             'userid' => $USER->id
         );
-        $fs = get_file_storage();
-        $dummyh5pfile = $fs->create_file_from_string($dummyh5p, 'Dummy H5Pcontent');
+        $path = $CFG->dirroot . '/h5p/tests/fixtures/' . $name;
+        $dummyh5pfile = \core_h5p\helper::create_fake_stored_file_from_path($path);
 
         $cb = new contentbank();
         $content = $cb->create_content_from_file($systemcontext, $USER->id, $dummyh5pfile);
@@ -506,5 +509,200 @@ class core_contentbank_testcase extends advanced_testcase {
 
         // Check there's no error when trying to move content context from an empty content bank.
         $this->assertTrue($cb->delete_contents($systemcontext, $coursecontext));
+    }
+
+    /**
+     * Data provider for get_contenttypes_with_capability_feature.
+     *
+     * @return  array
+     */
+    public function get_contenttypes_with_capability_feature_provider(): array {
+        return [
+            'no-contenttypes_enabled' => [
+                'contenttypesenabled' => [],
+                'contenttypescanfeature' => [],
+            ],
+            'contenttype_enabled_noeditable' => [
+                'contenttypesenabled' => ['testable'],
+                'contenttypescanfeature' => [],
+            ],
+            'contenttype_enabled_editable' => [
+                'contenttypesenabled' => ['testable'],
+                'contenttypescanfeature' => ['testable'],
+            ],
+            'no-contenttype_enabled_editable' => [
+                'contenttypesenabled' => [],
+                'contenttypescanfeature' => ['testable'],
+            ],
+        ];
+    }
+
+    /**
+     * Tests for get_contenttypes_with_capability_feature() function.
+     *
+     * @dataProvider    get_contenttypes_with_capability_feature_provider
+     * @param   array $contenttypesenabled Content types enabled.
+     * @param   array $contenttypescanfeature Content types the user has the permission to use the feature.
+     *
+     * @covers ::get_contenttypes_with_capability_feature
+     */
+    public function test_get_contenttypes_with_capability_feature(array $contenttypesenabled, array $contenttypescanfeature): void {
+        $this->resetAfterTest();
+
+        $cb = new contentbank();
+
+        $plugins = [];
+
+        // Content types not enabled where the user has permission to use a feature.
+        if (empty($contenttypesenabled) && !empty($contenttypescanfeature)) {
+            $enabled = false;
+
+            // Mock core_plugin_manager class and the method get_plugins_of_type.
+            $pluginmanager = $this->getMockBuilder(\core_plugin_manager::class)
+                ->disableOriginalConstructor()
+                ->onlyMethods(['get_plugins_of_type'])
+                ->getMock();
+
+            // Replace protected singletoninstance reference (core_plugin_manager property) with mock object.
+            $ref = new \ReflectionProperty(\core_plugin_manager::class, 'singletoninstance');
+            $ref->setAccessible(true);
+            $ref->setValue(null, $pluginmanager);
+
+            // Return values of get_plugins_of_type method.
+            foreach ($contenttypescanfeature as $contenttypepluginname) {
+                $contenttypeplugin = new \stdClass();
+                $contenttypeplugin->name = $contenttypepluginname;
+                $contenttypeplugin->type = 'contenttype';
+                // Add the feature to the fake content type.
+                $classname = "\\contenttype_$contenttypepluginname\\contenttype";
+                $classname::$featurestotest = ['test2'];
+                $plugins[] = $contenttypeplugin;
+            }
+
+            // Set expectations and return values.
+            $pluginmanager->expects($this->once())
+                ->method('get_plugins_of_type')
+                ->with('contenttype')
+                ->willReturn($plugins);
+        } else {
+            $enabled = true;
+            // Get access to private property enabledcontenttypes.
+            $rc = new \ReflectionClass(\core_contentbank\contentbank::class);
+            $rcp = $rc->getProperty('enabledcontenttypes');
+            $rcp->setAccessible(true);
+
+            foreach ($contenttypesenabled as $contenttypename) {
+                $plugins["\\contenttype_$contenttypename\\contenttype"] = $contenttypename;
+                // Add to the testable contenttype the feature to test.
+                if (in_array($contenttypename, $contenttypescanfeature)) {
+                    $classname = "\\contenttype_$contenttypename\\contenttype";
+                    $classname::$featurestotest = ['test2'];
+                }
+            }
+            // Set as enabled content types only those in the test.
+            $rcp->setValue($cb, $plugins);
+        }
+
+        $actual = $cb->get_contenttypes_with_capability_feature('test2', null, $enabled);
+        $this->assertEquals($contenttypescanfeature, array_values($actual));
+    }
+
+    /**
+     * Test the behaviour of get_content_from_id()
+     *
+     * @covers  ::get_content_from_id
+     */
+    public function test_get_content_from_id() {
+
+        $this->resetAfterTest();
+        $cb = new \core_contentbank\contentbank();
+
+        // Create a category and two courses.
+        $systemcontext = context_system::instance();
+
+        // Add some content to the content bank.
+        $generator = $this->getDataGenerator()->get_plugin_generator('core_contentbank');
+        $contents = $generator->generate_contentbank_data(null, 3, 0, $systemcontext);
+        $content = reset($contents);
+
+        // Get the content instance form id.
+        $newinstance = $cb->get_content_from_id($content->get_id());
+        $this->assertEquals($content->get_id(), $newinstance->get_id());
+
+        // Now produce and exception with an innexistent id.
+        $this->expectException(Exception::class);
+        $cb->get_content_from_id(0);
+    }
+
+    /**
+     * Test the behaviour of is_context_allowed().
+     *
+     * @dataProvider context_provider
+     * @param  \Closure $getcontext Get the context to check.
+     * @param  bool $expectedresult Expected result.
+     *
+     * @covers ::is_context_allowed
+     */
+    public function test_is_context_allowed(\Closure $getcontext, bool $expectedresult): void {
+        $this->resetAfterTest();
+
+        $cb = new contentbank();
+        $context = $getcontext();
+        $this->assertEquals($expectedresult, $cb->is_context_allowed($context));
+    }
+
+    /**
+     * Data provider for test_is_context_allowed().
+     *
+     * @return array
+     */
+    public function context_provider(): array {
+
+        return [
+            'System context' => [
+                function (): \context {
+                    return \context_system::instance();
+                },
+                true,
+            ],
+            'User context' => [
+                function (): \context {
+                    $user = $this->getDataGenerator()->create_user();
+                    return \context_user::instance($user->id);
+                },
+                false,
+            ],
+            'Course category context' => [
+                function (): \context {
+                    $coursecat = $this->getDataGenerator()->create_category();
+                    return \context_coursecat::instance($coursecat->id);
+                },
+                true,
+            ],
+            'Course context' => [
+                function (): \context {
+                    $course = $this->getDataGenerator()->create_course();
+                    return \context_course::instance($course->id);
+                },
+                true,
+            ],
+            'Module context' => [
+                function (): \context {
+                    $course = $this->getDataGenerator()->create_course();
+                    $module = $this->getDataGenerator()->create_module('page', ['course' => $course->id]);
+                    return \context_module::instance($module->cmid);
+                },
+                false,
+            ],
+            'Block context' => [
+                function (): \context {
+                    $course = $this->getDataGenerator()->create_course();
+                    $coursecontext = context_course::instance($course->id);
+                    $block = $this->getDataGenerator()->create_block('online_users', ['parentcontextid' => $coursecontext->id]);
+                    return \context_block::instance($block->id);
+                },
+                false,
+            ],
+        ];
     }
 }

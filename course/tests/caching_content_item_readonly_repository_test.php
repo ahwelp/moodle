@@ -22,7 +22,7 @@
  * @copyright  2020 Jake Dallimore <jrhdallimore@gmail.com>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-namespace tests\core_course;
+namespace core_course;
 
 defined('MOODLE_INTERNAL') || die();
 
@@ -35,7 +35,7 @@ use core_course\local\repository\caching_content_item_readonly_repository;
  * @copyright  2020 Jake Dallimore <jrhdallimore@gmail.com>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-class caching_content_item_readonly_repository_testcase extends \advanced_testcase {
+class caching_content_item_readonly_repository_test extends \advanced_testcase {
     /**
      * Test verifying that content items are cached and returned from the cache in subsequent same-request calls.
      */
@@ -51,15 +51,15 @@ class caching_content_item_readonly_repository_testcase extends \advanced_testca
         // Get the content items using both the live and the caching repos.
         $items = $cir->find_all_for_course($course, $user);
         $cacheditems = $ccir->find_all_for_course($course, $user);
-        $itemsfiltered = array_filter($items, function($item) {
-            return $item->get_component_name() == 'mod_assign';
-        });
-        $cacheditemsfiltered = array_filter($cacheditems, function($item) {
-            return $item->get_component_name() == 'mod_assign';
-        });
+        $itemsfiltered = array_values(array_filter($items, function($item) {
+            return $item->get_component_name() == 'mod_book';
+        }));
+        $cacheditemsfiltered = array_values(array_filter($cacheditems, function($item) {
+            return $item->get_component_name() == 'mod_book';
+        }));
 
-        // Verify the assign module is in both result sets.
-        $module = $DB->get_record('modules', ['name' => 'assign']);
+        // Verify the book module is in both result sets.
+        $module = $DB->get_record('modules', ['name' => 'book']);
         $this->assertEquals($module->name, $itemsfiltered[0]->get_name());
         $this->assertEquals($module->name, $cacheditemsfiltered[0]->get_name());
 
@@ -67,12 +67,12 @@ class caching_content_item_readonly_repository_testcase extends \advanced_testca
         $DB->set_field("modules", "visible", "0", ["id" => $module->id]);
         $items = $cir->find_all_for_course($course, $user);
         $cacheditems = $ccir->find_all_for_course($course, $user);
-        $itemsfiltered = array_filter($items, function($item) {
-            return $item->get_component_name() == 'mod_assign';
-        });
-        $cacheditemsfiltered = array_filter($cacheditems, function($item) {
-            return $item->get_component_name() == 'mod_assign';
-        });
+        $itemsfiltered = array_values(array_filter($items, function($item) {
+            return $item->get_component_name() == 'mod_book';
+        }));
+        $cacheditemsfiltered = array_values(array_filter($cacheditems, function($item) {
+            return $item->get_component_name() == 'mod_book';
+        }));
 
         // The caching repo should return the same list, while the live repo will return the updated list.
         $this->assertEquals($module->name, $cacheditemsfiltered[0]->get_name());

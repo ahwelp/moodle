@@ -26,8 +26,8 @@ namespace core_h5p;
 
 use core_h5p\local\library\autoloader;
 use core_h5p\output\h5peditor as editor_renderer;
-use H5PCore;
-use H5peditor;
+use Moodle\H5PCore;
+use Moodle\H5peditor;
 use stdClass;
 use coding_exception;
 use MoodleQuickForm;
@@ -104,7 +104,7 @@ class editor {
         // Load the present content.
         $this->oldcontent = $this->core->loadContent($id);
         if ($this->oldcontent === null) {
-            print_error('invalidelementid');
+            throw new \moodle_exception('invalidelementid');
         }
 
         // Identify the content type library.
@@ -115,7 +115,7 @@ class editor {
         $fs = get_file_storage();
         $oldfile = $fs->get_file_by_hash($pathnamehash);
         if (!$oldfile) {
-            print_error('invalidelementid');
+            throw new \moodle_exception('invalidelementid');
         }
         $this->set_filearea(
             $oldfile->get_contextid(),
@@ -228,10 +228,6 @@ class editor {
             throw new coding_exception('Missing H5P library.');
         }
 
-        if ($content->h5plibrary != $this->library) {
-            throw new coding_exception("Wrong H5P library.");
-        }
-
         $content->params = $content->h5pparams;
 
         if (!empty($this->oldcontent)) {
@@ -310,15 +306,16 @@ class editor {
         if ($file) {
             $fields['contenthash'] = $file->get_contenthash();
 
-            // Delete old file if any.
-            if (!empty($this->oldfile)) {
-                $this->oldfile->delete();
-            }
-            // Create new file.
+            // Create or update H5P file.
             if (empty($this->filearea['filename'])) {
                 $this->filearea['filename'] = $contentarray['slug'] . '.h5p';
             }
-            $newfile = $fs->create_file_from_storedfile($this->filearea, $file);
+            if (!empty($this->oldfile)) {
+                $this->oldfile->replace_file_with($file);
+                $newfile = $this->oldfile;
+            } else {
+                $newfile = $fs->create_file_from_storedfile($this->filearea, $file);
+            }
             if (empty($this->oldcontent)) {
                 $pathnamehash = $newfile->get_pathnamehash();
             } else {
@@ -385,20 +382,21 @@ class editor {
 
         // Add JavaScript settings.
         $root = $CFG->wwwroot;
-        $filespathbase = "{$root}/pluginfile.php/{$context->id}/core_h5p/";
+        $filespathbase = \moodle_url::make_draftfile_url(0, '', '');
 
         $factory = new factory();
         $contentvalidator = $factory->get_content_validator();
 
         $editorajaxtoken = core::createToken(editor_ajax::EDITOR_AJAX_TOKEN);
+        $sesskey = sesskey();
         $settings['editor'] = [
-            'filesPath' => $filespathbase . 'editor',
+            'filesPath' => $filespathbase->out(),
             'fileIcon' => [
                 'path' => $url . 'images/binary-file.png',
                 'width' => 50,
                 'height' => 50,
             ],
-            'ajaxPath' => $CFG->wwwroot . '/h5p/' . "ajax.php?contextId={$context->id}&token={$editorajaxtoken}&action=",
+            'ajaxPath' => $CFG->wwwroot . "/h5p/ajax.php?sesskey={$sesskey}&token={$editorajaxtoken}&action=",
             'libraryUrl' => $url,
             'copyrightSemantics' => $contentvalidator->getCopyrightSemantics(),
             'metadataSemantics' => $contentvalidator->getMetadataSemantics(),

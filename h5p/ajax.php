@@ -24,27 +24,30 @@
 
 use core_h5p\factory;
 use core_h5p\framework;
+use core_h5p\local\library\autoloader;
+use Moodle\H5PCore;
+use Moodle\H5PEditorEndpoints;
 
 define('AJAX_SCRIPT', true);
 
 require(__DIR__ . '/../config.php');
 require_once($CFG->libdir . '/filelib.php');
 
-require_login();
-
-$action = required_param('action', PARAM_ALPHA);
-$contextid = required_param('contextId', PARAM_INT);
-
-$context = context::instance_by_id($contextid);
-
-if (!has_capability('moodle/h5p:updatelibraries', $context)) {
-    H5PCore::ajaxError(get_string('nopermissiontoedit', 'h5p'));
+if (!confirm_sesskey()) {
+    autoloader::register();
+    H5PCore::ajaxError(get_string('invalidsesskey', 'error'));
     header('HTTP/1.1 403 Forbidden');
     return;
 }
+require_login();
+
+$action = required_param('action', PARAM_ALPHA);
 
 $factory = new factory();
 $editor = $factory->get_editor();
+
+// Set context to default system context.
+$PAGE->set_context(null);
 
 switch ($action) {
     // Load list of libraries or details for library.
@@ -54,7 +57,9 @@ switch ($action) {
         $major = optional_param('majorVersion', 0, PARAM_INT);
         $minor = optional_param('minorVersion', 0, PARAM_INT);
 
-        $language = optional_param('default-language', null, PARAM_ALPHA);
+        // Normalise Moodle language using underscore, as opposed to H5P which uses dash.
+        $language = optional_param('default-language', null, PARAM_RAW);
+        $language = clean_param(str_replace('-', '_', $language), PARAM_LANG);
 
         if (!empty($name)) {
             $editor->ajax->action(H5PEditorEndpoints::SINGLE_LIBRARY, $name,
@@ -71,27 +76,24 @@ switch ($action) {
         break;
 
     // Handle file upload through the editor.
+    // This endpoint needs a token that only users with H5P editor access could get.
+    // TODO: MDL-68907 to check capabilities.
     case 'files':
         $token = required_param('token', PARAM_RAW);
         $contentid = required_param('contentId', PARAM_INT);
 
+        $maxsize = get_max_upload_file_size($CFG->maxbytes);
+        // Check size of each uploaded file and scan for viruses.
+        foreach ($_FILES as $uploadedfile) {
+            $filename = clean_param($uploadedfile['name'], PARAM_FILE);
+            if ($uploadedfile['size'] > $maxsize) {
+                H5PCore::ajaxError(get_string('maxbytesfile', 'error', ['file' => $filename, 'size' => display_size($maxsize, 0)]));
+                return;
+            }
+            \core\antivirus\manager::scan_file($uploadedfile['tmp_name'], $filename, true);
+        }
+
         $editor->ajax->action(H5PEditorEndpoints::FILES, $token, $contentid);
-        break;
-
-    // Install libraries from H5P and retrieve content json.
-    case 'libraryinstall':
-        $token = required_param('token', PARAM_RAW);
-        $machinename = required_param('id', PARAM_TEXT);
-        $editor->ajax->action(H5PEditorEndpoints::LIBRARY_INSTALL, $token, $machinename);
-        break;
-
-    // Handle file upload through the editor.
-    case 'libraryupload':
-        $token = required_param('token', PARAM_RAW);
-
-        $uploadpath = $_FILES['h5p']['tmp_name'];
-        $contentid = optional_param('contentId', 0, PARAM_INT);
-        $editor->ajax->action(H5PEditorEndpoints::LIBRARY_UPLOAD, $token, $uploadpath, $contentid);
         break;
 
     // Get the $language libraries translations.

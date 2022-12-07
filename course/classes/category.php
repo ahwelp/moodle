@@ -172,13 +172,31 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
     }
 
     /**
+     * Get list of plugin callback functions.
+     *
+     * @param string $name Callback function name.
+     * @return [callable] $pluginfunctions
+     */
+    public function get_plugins_callback_function(string $name) : array {
+        $pluginfunctions = [];
+        if ($pluginsfunction = get_plugins_with_function($name)) {
+            foreach ($pluginsfunction as $plugintype => $plugins) {
+                foreach ($plugins as $pluginfunction) {
+                    $pluginfunctions[] = $pluginfunction;
+                }
+            }
+        }
+        return $pluginfunctions;
+    }
+
+    /**
      * Create an iterator because magic vars can't be seen by 'foreach'.
      *
      * implementing method from interface IteratorAggregate
      *
      * @return ArrayIterator
      */
-    public function getIterator() {
+    public function getIterator(): Traversable {
         $ret = array();
         foreach (self::$coursecatfields as $property => $unused) {
             if ($this->$property !== false) {
@@ -805,7 +823,7 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
             // No categories found.
             // This may happen after upgrade of a very old moodle version.
             // In new versions the default category is created on install.
-            $defcoursecat = self::create(array('name' => get_string('miscellaneous')));
+            $defcoursecat = self::create(array('name' => get_string('defaultcategoryname')));
             set_config('defaultrequestcategory', $defcoursecat->id);
             $all[0] = array($defcoursecat->id);
             $all[$defcoursecat->id] = array();
@@ -1015,7 +1033,8 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
         list($sql2, $params2) = $DB->get_in_or_equal($managerroles, SQL_PARAMS_NAMED, 'rid');
         list($sort, $sortparams) = users_order_by_sql('u');
         $notdeleted = array('notdeleted' => 0);
-        $allnames = get_all_user_name_fields(true, 'u');
+        $userfieldsapi = \core_user\fields::for_name();
+        $allnames = $userfieldsapi->get_sql('u', false, '', '', false)->selects;
         $sql = "SELECT ra.contextid, ra.id AS raid,
                        r.id AS roleid, r.name AS rolename, r.shortname AS roleshortname,
                        rn.name AS rolecoursealias, u.id, u.username, $allnames
@@ -1582,7 +1601,10 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
                 }
                 // Prepare the list of core_course_list_element objects.
                 foreach ($ids as $id) {
-                    $courses[$id] = new core_course_list_element($records[$id]);
+                    // If a course is deleted after we got the cache entry it may not exist in the database anymore.
+                    if (!empty($records[$id])) {
+                        $courses[$id] = new core_course_list_element($records[$id]);
+                    }
                 }
             }
             return $courses;
@@ -1792,7 +1814,10 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
                 }
                 // Prepare the list of core_course_list_element objects.
                 foreach ($ids as $id) {
-                    $courses[$id] = new core_course_list_element($records[$id]);
+                    // If a course is deleted after we got the cache entry it may not exist in the database anymore.
+                    if (!empty($records[$id])) {
+                        $courses[$id] = new core_course_list_element($records[$id]);
+                    }
                 }
             }
             return $courses;
@@ -1900,13 +1925,12 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
             return false;
         }
 
-        $context = $this->get_context();
-        if (!$this->is_uservisible() ||
-                !has_capability('moodle/category:manage', $context)) {
+        if (!$this->has_manage_capability()) {
             return false;
         }
 
         // Check all child categories (not only direct children).
+        $context = $this->get_context();
         $sql = context_helper::get_preload_record_columns_sql('ctx');
         $childcategories = $DB->get_records_sql('SELECT c.id, c.visible, '. $sql.
             ' FROM {context} ctx '.
@@ -1936,6 +1960,15 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
             }
         }
 
+        // Check if plugins permit deletion of category content.
+        $pluginfunctions = $this->get_plugins_callback_function('can_course_category_delete');
+        foreach ($pluginfunctions as $pluginfunction) {
+            // If at least one plugin does not permit deletion, stop and return false.
+            if (!$pluginfunction($this)) {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -1961,13 +1994,9 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
         $settimeout = core_php_time_limit::raise();
 
         // Allow plugins to use this category before we completely delete it.
-        if ($pluginsfunction = get_plugins_with_function('pre_course_category_delete')) {
-            $category = $this->get_db_record();
-            foreach ($pluginsfunction as $plugintype => $plugins) {
-                foreach ($plugins as $pluginfunction) {
-                    $pluginfunction($category);
-                }
-            }
+        $pluginfunctions = $this->get_plugins_callback_function('pre_course_category_delete');
+        foreach ($pluginfunctions as $pluginfunction) {
+            $pluginfunction($this->get_db_record());
         }
 
         $deletedcourses = array();
@@ -1997,7 +2026,7 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
         if (!$cb->delete_contents($this->get_context())) {
             throw new moodle_exception('errordeletingcontentfromcategory', 'contentbank', '', $this->get_formatted_name());
         }
-        if (!question_delete_course_category($this, 0, $showfeedback)) {
+        if (!question_delete_course_category($this, null)) {
             throw new moodle_exception('cannotdeletecategoryquestions', '', '', $this->get_formatted_name());
         }
 
@@ -2005,6 +2034,7 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
         $DB->delete_records('event', array('categoryid' => $this->id));
 
         // Finally delete the category and it's context.
+        $categoryrecord = $this->get_db_record();
         $DB->delete_records('course_categories', array('id' => $this->id));
 
         $coursecatcontext = context_coursecat::instance($this->id);
@@ -2019,6 +2049,7 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
             'context' => $coursecatcontext,
             'other' => array('name' => $this->name)
         ));
+        $event->add_record_snapshot($event->objecttable, $categoryrecord);
         $event->set_coursecat($this);
         $event->trigger();
 
@@ -2076,25 +2107,35 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
     public function can_move_content_to($newcatid) {
         global $CFG;
         require_once($CFG->libdir . '/questionlib.php');
-        $context = $this->get_context();
-        if (!$this->is_uservisible() ||
-                !has_capability('moodle/category:manage', $context)) {
+
+        if (!$this->has_manage_capability()) {
             return false;
         }
+
         $testcaps = array();
         // If this category has courses in it, user must have 'course:create' capability in target category.
         if ($this->has_courses()) {
             $testcaps[] = 'moodle/course:create';
         }
         // If this category has subcategories or questions, user must have 'category:manage' capability in target category.
-        if ($this->has_children() || question_context_has_any_questions($context)) {
+        if ($this->has_children() || question_context_has_any_questions($this->get_context())) {
             $testcaps[] = 'moodle/category:manage';
         }
-        if (!empty($testcaps)) {
-            return has_all_capabilities($testcaps, context_coursecat::instance($newcatid));
+        if (!empty($testcaps) && !has_all_capabilities($testcaps, context_coursecat::instance($newcatid))) {
+            // No sufficient capabilities to perform this task.
+            return false;
         }
 
-        // There is no content but still return true.
+        // Check if plugins permit moving category content.
+        $pluginfunctions = $this->get_plugins_callback_function('can_course_category_delete_move');
+        $newparentcat = self::get($newcatid, MUST_EXIST, true);
+        foreach ($pluginfunctions as $pluginfunction) {
+            // If at least one plugin does not permit move on deletion, stop and return false.
+            if (!$pluginfunction($this, $newparentcat)) {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -2123,6 +2164,12 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
         $params = array('category' => $this->id);
         $coursesids = $DB->get_fieldset_select('course', 'id', 'category = :category ORDER BY sortorder ASC', $params);
         $context = $this->get_context();
+
+        // Allow plugins to make necessary changes before we move the category content.
+        $pluginfunctions = $this->get_plugins_callback_function('pre_course_category_delete_move');
+        foreach ($pluginfunctions as $pluginfunction) {
+            $pluginfunction($this, $newparentcat);
+        }
 
         if ($children) {
             foreach ($children as $childcat) {
@@ -2170,7 +2217,7 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
                 );
             }
         }
-        if (!question_delete_course_category($this, $newparentcat, $showfeedback)) {
+        if (!question_delete_course_category($this, $newparentcat)) {
             if ($showfeedback) {
                 echo $OUTPUT->notification(get_string('errordeletingquestionsfromcategory', 'question', $catname), 'notifysuccess');
             }
@@ -2178,6 +2225,7 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
         }
 
         // Finally delete the category and it's context.
+        $categoryrecord = $this->get_db_record();
         $DB->delete_records('course_categories', array('id' => $this->id));
         $context->delete();
 
@@ -2186,8 +2234,9 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
         $event = \core\event\course_category_deleted::create(array(
             'objectid' => $this->id,
             'context' => $context,
-            'other' => array('name' => $this->name)
+            'other' => array('name' => $this->name, 'contentmovedcategoryid' => $newparentid)
         ));
+        $event->add_record_snapshot($event->objecttable, $categoryrecord);
         $event->set_coursecat($this);
         $event->trigger();
 
@@ -2275,7 +2324,8 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
         $context->update_moved($newparent);
 
         // Now make it last in new category.
-        $DB->set_field('course_categories', 'sortorder', MAX_COURSES_IN_CATEGORY * MAX_COURSE_CATEGORIES, ['id' => $this->id]);
+        $DB->set_field('course_categories', 'sortorder',
+            get_max_courses_in_category() * MAX_COURSE_CATEGORIES, ['id' => $this->id]);
 
         if ($hidecat) {
             fix_course_sortorder();
@@ -2502,7 +2552,7 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
      * Returns ids of all parents of the category. Last element in the return array is the direct parent
      *
      * For example, if you have a tree of categories like:
-     *   Miscellaneous (id = 1)
+     *   Category (id = 1)
      *      Subcategory (id = 2)
      *         Sub-subcategory (id = 4)
      *   Other category (id = 3)
@@ -2528,14 +2578,14 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
      * List is cached for 10 minutes
      *
      * For example, if you have a tree of categories like:
-     *   Miscellaneous (id = 1)
+     *   Category (id = 1)
      *      Subcategory (id = 2)
      *         Sub-subcategory (id = 4)
      *   Other category (id = 3)
      * Then after calling this function you will have
-     * array(1 => 'Miscellaneous',
-     *       2 => 'Miscellaneous / Subcategory',
-     *       4 => 'Miscellaneous / Subcategory / Sub-subcategory',
+     * array(1 => 'Category',
+     *       2 => 'Category / Subcategory',
+     *       4 => 'Category / Subcategory / Sub-subcategory',
      *       3 => 'Other category');
      *
      * If you specify $requiredcapability, then only categories where the current
@@ -2547,8 +2597,6 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
      * are omitted from the tree. This is useful when you are doing something like
      * moving categories, where you do not want to allow people to move a category
      * to be the child of itself.
-     *
-     * See also {@link make_categories_options()}
      *
      * @param string/array $requiredcapability if given, only categories where the current
      *      user has this capability will be returned. Can also be an array of capabilities,
@@ -2592,10 +2640,11 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
             $thislist = array();
             foreach ($rs as $record) {
                 context_helper::preload_from_record($record);
-                $context = context_coursecat::instance($record->id);
                 $canview = self::can_view_category($record);
+                $context = context_coursecat::instance($record->id);
+                $filtercontext = \context_helper::get_navigation_filter_context($context);
                 $baselist[$record->id] = array(
-                    'name' => $canview ? format_string($record->name, true, array('context' => $context)) : false,
+                    'name' => $canview ? format_string($record->name, true, array('context' => $filtercontext)) : false,
                     'path' => $record->path
                 );
                 if (!$canview || (!empty($requiredcapability) && !has_all_capabilities($requiredcapability, $context))) {
@@ -2727,6 +2776,17 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
             return false;
         }
         return has_capability('moodle/category:manage', $this->get_context());
+    }
+
+    /**
+     * Checks whether the category has access to content bank
+     *
+     * @return bool
+     */
+    public function has_contentbank() {
+        $cb = new \core_contentbank\contentbank();
+        return ($cb->is_context_allowed($this->get_context()) &&
+            has_capability('moodle/contentbank:access', $this->get_context()));
     }
 
     /**
@@ -3042,6 +3102,36 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
     }
 
     /**
+     * Returns true if the user has all the given permissions.
+     *
+     * @param array $permissionstocheck The value can be create, manage or any specific capability.
+     * @return bool
+     */
+    private function has_capabilities(array $permissionstocheck): bool {
+        if (empty($permissionstocheck)) {
+            throw new coding_exception('Invalid permissionstocheck parameter');
+        }
+        foreach ($permissionstocheck as $permission) {
+            if ($permission == 'create') {
+                if (!$this->can_create_course()) {
+                    return false;
+                }
+            } else if ($permission == 'manage') {
+                if (!$this->has_manage_capability()) {
+                    return false;
+                }
+            } else {
+                // Specific capability.
+                if (!$this->is_uservisible() || !has_capability($permission, $this->get_context())) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Returns true if the user can approve course requests.
      * @return bool
      */
@@ -3058,5 +3148,61 @@ class core_course_category implements renderable, cacheable_object, IteratorAggr
             return false;
         }
         return true;
+    }
+
+    /**
+     * General page setup for the course category pages.
+     *
+     * This method sets up things which are common for the course category pages such as page heading,
+     * the active nodes in the page navigation block, the active item in the primary navigation (when applicable).
+     *
+     * @return void
+     */
+    public static function page_setup() {
+        global $PAGE;
+
+        if ($PAGE->context->contextlevel != CONTEXT_COURSECAT) {
+            return;
+        }
+        $categoryid = $PAGE->context->instanceid;
+        // Highlight the 'Home' primary navigation item (when applicable).
+        $PAGE->set_primary_active_tab('home');
+        // Set the page heading to display the category name.
+        $coursecategory = self::get($categoryid, MUST_EXIST, true);
+        $PAGE->set_heading($coursecategory->get_formatted_name());
+        // Set the category node active in the navigation block.
+        if ($coursesnode = $PAGE->navigation->find('courses', navigation_node::COURSE_OTHER)) {
+            if ($categorynode = $coursesnode->find($categoryid, navigation_node::TYPE_CATEGORY)) {
+                $categorynode->make_active();
+            }
+        }
+    }
+
+    /**
+     * Returns the core_course_category object for the first category that the current user have the permission for the course.
+     *
+     * Only returns if it exists and is creatable/manageable to the current user
+     *
+     * @param core_course_category $parentcat Parent category to check.
+     * @param array $permissionstocheck The value can be create, manage or any specific capability.
+     * @return core_course_category|null
+     */
+    public static function get_nearest_editable_subcategory(core_course_category $parentcat,
+        array $permissionstocheck): ?core_course_category {
+        // First, check the parent category.
+        if ($parentcat->has_capabilities($permissionstocheck)) {
+            return $parentcat;
+        }
+
+        // Check the child categories.
+        $subcategoryids = $parentcat->get_all_children_ids();
+        foreach ($subcategoryids as $subcategoryid) {
+            $subcategory = static::get($subcategoryid, MUST_EXIST, true);
+            if ($subcategory->has_capabilities($permissionstocheck)) {
+                return $subcategory;
+            }
+        }
+
+        return null;
     }
 }

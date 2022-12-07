@@ -79,7 +79,9 @@ abstract class handler {
      * Register the H5P autoloader.
      */
     public static function register(): void {
-        spl_autoload_register([static::class, 'autoload']);
+        // Prepend H5P libraries in order to guarantee they are loaded first. Plugins using same libraries will need to use a
+        // different namespace if they want to use a different version.
+        spl_autoload_register([static::class, 'autoload'], true, true);
     }
 
     /**
@@ -134,6 +136,10 @@ abstract class handler {
         $value = null;
         $h5pversion = static::get_h5p_version();
         $component = 'h5plib_v' . $h5pversion;
+        // Composed code languages, such as 'Spanish, Mexican' are different in H5P and Moodle:
+        // - In H5P, they use '-' to separate language from the country. For instance: es-mx.
+        // - However, in Moodle, they have '_' instead of '-'. For instance: es_mx.
+        $language = str_replace('-', '_', $language);
         if (get_string_manager()->string_exists($identifier, $component)) {
             $defaultmoodlelang = 'en';
             // In Moodle, all the English strings always will exist because they have to be declared in order to let users
@@ -155,19 +161,20 @@ abstract class handler {
      */
     protected static function get_class_list(): array {
         return [
-            'H5PCore' => 'h5p.classes.php',
-            'H5PFrameworkInterface' => 'h5p.classes.php',
-            'H5PContentValidator' => 'h5p.classes.php',
-            'H5PValidator' => 'h5p.classes.php',
-            'H5PStorage' => 'h5p.classes.php',
-            'H5PDevelopment' => 'h5p-development.class.php',
-            'H5PFileStorage' => 'h5p-file-storage.interface.php',
-            'H5PMetadata' => 'h5p-metadata.class.php',
-            'H5peditor' => 'h5peditor.class.php',
-            'H5peditorStorage' => 'h5peditor-storage.interface.php',
-            'H5PEditorAjaxInterface' => 'h5peditor-ajax.interface.php',
-            'H5PEditorAjax' => 'h5peditor-ajax.class.php',
-            'H5peditorFile' => 'h5peditor-file.class.php',
+            'Moodle\H5PCore' => 'h5p.classes.php',
+            'Moodle\H5PFrameworkInterface' => 'h5p.classes.php',
+            'Moodle\H5PContentValidator' => 'h5p.classes.php',
+            'Moodle\H5PValidator' => 'h5p.classes.php',
+            'Moodle\H5PStorage' => 'h5p.classes.php',
+            'Moodle\H5PDevelopment' => 'h5p-development.class.php',
+            'Moodle\H5PFileStorage' => 'h5p-file-storage.interface.php',
+            'Moodle\H5PDefaultStorage' => 'h5p-default-storage.class.php',
+            'Moodle\H5PMetadata' => 'h5p-metadata.class.php',
+            'Moodle\H5peditor' => 'h5peditor.class.php',
+            'Moodle\H5peditorStorage' => 'h5peditor-storage.interface.php',
+            'Moodle\H5PEditorAjaxInterface' => 'h5peditor-ajax.interface.php',
+            'Moodle\H5PEditorAjax' => 'h5peditor-ajax.class.php',
+            'Moodle\H5peditorFile' => 'h5peditor-file.class.php',
         ];
     }
 }

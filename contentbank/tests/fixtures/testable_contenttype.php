@@ -37,18 +37,8 @@ class contenttype extends \core_contentbank\contenttype {
     /** Feature for testing */
     const CAN_TEST = 'test';
 
-    /**
-     * Returns the URL where the content will be visualized.
-     *
-     * @param  content $content The content to delete.
-     * @return string            URL where to visualize the given content.
-     */
-    public function get_view_url(\core_contentbank\content $content): string {
-        $fileurl = $this->get_file_url($content->get_id());
-        $url = $fileurl."?forcedownload=1";
-
-        return $url;
-    }
+    /** @var array Additional features for testing */
+    public static $featurestotest;
 
     /**
      * Returns the HTML code to render the icon for content bank contents.
@@ -68,7 +58,13 @@ class contenttype extends \core_contentbank\contenttype {
      * @return array
      */
     protected function get_implemented_features(): array {
-        return [self::CAN_TEST];
+        $features = [self::CAN_TEST];
+
+        if (!empty(self::$featurestotest)) {
+            $features = array_merge($features, self::$featurestotest);
+        }
+
+        return $features;
     }
 
     /**
@@ -78,5 +74,46 @@ class contenttype extends \core_contentbank\contenttype {
      */
     public function get_manageable_extensions(): array {
         return  ['.txt', '.png', '.h5p'];
+    }
+
+    /**
+     * Returns the list of different types of the given content type.
+     *
+     * @return array
+     */
+    public function get_contenttype_types(): array {
+        $type = new \stdClass();
+        $type->typename = 'testable';
+
+        return [$type];
+    }
+
+    /**
+     * Returns true, so the user has permission on the feature.
+     *
+     * @return bool     True if content could be edited or created. False otherwise.
+     */
+    final public function can_test2(): bool {
+        if (!$this->is_feature_supported('test2')) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * This implements custom file serving.
+     *
+     * @param stdClass $course the course object
+     * @param stdClass $cm the course module object
+     * @param \context $context the context
+     * @param string $filearea the name of the file area
+     * @param array $args extra arguments (itemid, path)
+     * @param bool $forcedownload whether or not force download
+     * @param array $options additional options affecting the file serving
+     * @return void
+     */
+    public static function pluginfile($course, $cm, $context, $filearea, $args, $forcedownload, array $options = []): void {
+        return;
     }
 }

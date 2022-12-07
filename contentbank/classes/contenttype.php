@@ -27,6 +27,8 @@ namespace core_contentbank;
 use core\event\contentbank_content_created;
 use core\event\contentbank_content_deleted;
 use core\event\contentbank_content_viewed;
+use stored_file;
+use Exception;
 use moodle_url;
 
 /**
@@ -38,10 +40,19 @@ use moodle_url;
  */
 abstract class contenttype {
 
-    /** Plugin implements uploading feature */
+    /** @var string Constant representing whether the plugin implements uploading feature */
     const CAN_UPLOAD = 'upload';
 
-    /** @var context This contenttype's context. **/
+    /** @var string Constant representing whether the plugin implements edition feature */
+    const CAN_EDIT = 'edit';
+
+    /**
+     * @var string Constant representing whether the plugin implements download feature
+     * @since  Moodle 3.10
+     */
+    const CAN_DOWNLOAD = 'download';
+
+    /** @var \context This contenttype's context. **/
     protected $context = null;
 
     /**
@@ -59,13 +70,21 @@ abstract class contenttype {
     /**
      * Fills content_bank table with appropiate information.
      *
-     * @param stdClass $record An optional content record compatible object (default null)
+     * @throws dml_exception A DML specific exception is thrown for any creation error.
+     * @param \stdClass $record An optional content record compatible object (default null)
      * @return content  Object with content bank information.
      */
-    public function create_content(\stdClass $record = null): ?content {
-        global $USER, $DB;
+    public function create_content(\stdClass $record = null): content {
+        global $USER, $DB, $CFG;
 
         $entry = new \stdClass();
+        if (isset($record->visibility)) {
+            $entry->visibility = $record->visibility;
+        } else {
+            $usercreated = $record->usercreated ?? $USER->id;
+            $entry->visibility = get_user_preferences('core_contentbank_visibility',
+                $CFG->defaultpreference_core_contentbank_visibility, $usercreated);
+        }
         $entry->contenttype = $this->get_contenttype_name();
         $entry->contextid = $this->context->id;
         $entry->name = $record->name ?? '';
@@ -76,15 +95,52 @@ abstract class contenttype {
         $entry->configdata = $record->configdata ?? '';
         $entry->instanceid = $record->instanceid ?? 0;
         $entry->id = $DB->insert_record('contentbank_content', $entry);
-        if ($entry->id) {
-            $classname = '\\'.$entry->contenttype.'\\content';
-            $content = new $classname($entry);
-            // Trigger an event for creating the content.
-            $event = contentbank_content_created::create_from_record($content->get_content());
-            $event->trigger();
-            return $content;
+        $classname = '\\'.$entry->contenttype.'\\content';
+        $content = new $classname($entry);
+        // Trigger an event for creating the content.
+        $event = contentbank_content_created::create_from_record($content->get_content());
+        $event->trigger();
+        return $content;
+    }
+
+    /**
+     * Create a new content from an uploaded file.
+     *
+     * @throws file_exception If file operations fail
+     * @throws dml_exception if the content creation fails
+     * @param stored_file $file the uploaded file
+     * @param \stdClass|null $record an optional content record
+     * @return content  Object with content bank information.
+     */
+    public function upload_content(stored_file $file, \stdClass $record = null): content {
+        if (empty($record)) {
+            $record = new \stdClass();
+            $record->name = $file->get_filename();
         }
-        return null;
+        $content = $this->create_content($record);
+        try {
+            $content->import_file($file);
+        } catch (Exception $e) {
+            $this->delete_content($content);
+            throw $e;
+        }
+
+        return $content;
+    }
+
+    /**
+     * Replace a content using an uploaded file.
+     *
+     * @throws file_exception If file operations fail
+     * @throws dml_exception if the content creation fails
+     * @param stored_file $file the uploaded file
+     * @param content $content the original content record
+     * @return content Object with the updated content bank information.
+     */
+    public function replace_content(stored_file $file, content $content): content {
+        $content->import_file($file);
+        $content->update_content();
+        return $content;
     }
 
     /**
@@ -127,7 +183,7 @@ abstract class contenttype {
      * This method can be overwritten by the plugins if they need to change some other specific information.
      *
      * @param  content $content The content to rename.
-     * @param string $name  The name of the content.
+     * @param  string $name  The name of the content.
      * @return boolean true if the content has been renamed; false otherwise.
      */
     public function rename_content(content $content, string $name): bool {
@@ -139,7 +195,7 @@ abstract class contenttype {
      * This method can be overwritten by the plugins if they need to change some other specific information.
      *
      * @param  content $content The content to rename.
-     * @param context $context  The new context.
+     * @param  \context $context  The new context.
      * @return boolean true if the content has been renamed; false otherwise.
      */
     public function move_content(content $content, \context $context): bool {
@@ -186,8 +242,35 @@ abstract class contenttype {
      */
     public function get_view_content(content $content): string {
         // Trigger an event for viewing this content.
-        $event = contentbank_content_viewed::create_from_record($record);
+        $event = contentbank_content_viewed::create_from_record($content->get_content());
         $event->trigger();
+
+        return '';
+    }
+
+    /**
+     * Returns the URL to download the content.
+     *
+     * @since  Moodle 3.10
+     * @param  content $content The content to be downloaded.
+     * @return string           URL with the content to download.
+     */
+    public function get_download_url(content $content): string {
+        $downloadurl = '';
+        $file = $content->get_file();
+        if (!empty($file)) {
+            $url = \moodle_url::make_pluginfile_url(
+                $file->get_contextid(),
+                $file->get_component(),
+                $file->get_filearea(),
+                $file->get_itemid(),
+                $file->get_filepath(),
+                $file->get_filename()
+            );
+            $downloadurl = $url->out(false);
+        }
+
+        return $downloadurl;
     }
 
     /**
@@ -324,6 +407,77 @@ abstract class contenttype {
     }
 
     /**
+     * Returns whether or not the user has permission to use the editor.
+     * This function will be called with the content to be edited as parameter,
+     * or null when is checking permission to create a new content using the editor.
+     *
+     * @param  content $content The content to be edited or null when creating a new content.
+     * @return bool     True if the user can edit content. False otherwise.
+     */
+    final public function can_edit(?content $content = null): bool {
+        if (!$this->is_feature_supported(self::CAN_EDIT)) {
+            return false;
+        }
+
+        if (!$this->can_access()) {
+            return false;
+        }
+
+        if (!is_null($content) && !$this->can_manage($content)) {
+            return false;
+        }
+
+        $classname = 'contenttype/'.$this->get_plugin_name();
+
+        $editioncap = $classname.':useeditor';
+        $hascapabilities = has_all_capabilities(['moodle/contentbank:useeditor', $editioncap], $this->context);
+        return $hascapabilities && $this->is_edit_allowed($content);
+    }
+
+    /**
+     * Returns plugin allows edition.
+     *
+     * @param  content $content The content to be edited.
+     * @return bool     True if plugin allows edition. False otherwise.
+     */
+    protected function is_edit_allowed(?content $content): bool {
+        // Plugins can overwrite this function to add any check they need.
+        return true;
+    }
+
+    /**
+     * Returns whether or not the user has permission to download the content.
+     *
+     * @since  Moodle 3.10
+     * @param  content $content The content to be downloaded.
+     * @return bool    True if the user can download the content. False otherwise.
+     */
+    final public function can_download(content $content): bool {
+        if (!$this->is_feature_supported(self::CAN_DOWNLOAD)) {
+            return false;
+        }
+
+        if (!$this->can_access()) {
+            return false;
+        }
+
+        $hascapability = has_capability('moodle/contentbank:downloadcontent', $this->context);
+        return $hascapability && $this->is_download_allowed($content);
+    }
+
+    /**
+     * Returns plugin allows downloading.
+     *
+     * @since  Moodle 3.10
+     * @param  content $content The content to be downloaed.
+     * @return bool    True if plugin allows downloading. False otherwise.
+     */
+    protected function is_download_allowed(content $content): bool {
+        // Plugins can overwrite this function to add any check they need.
+        return true;
+    }
+
+    /**
      * Returns the plugin supports the feature.
      *
      * @param string $feature Feature code e.g CAN_UPLOAD
@@ -346,4 +500,17 @@ abstract class contenttype {
      * @return array
      */
     abstract public function get_manageable_extensions(): array;
+
+    /**
+     * Returns the list of different types of the given content type.
+     *
+     * A content type can have one or more options for creating content. This method will report all of them or only the content
+     * type itself if it has no other options.
+     *
+     * @return array An object for each type:
+     *     - string typename: descriptive name of the type.
+     *     - string typeeditorparams: params required by this content type editor.
+     *     - url typeicon: this type icon.
+     */
+    abstract public function get_contenttype_types(): array;
 }

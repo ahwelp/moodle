@@ -164,6 +164,7 @@ class main implements renderable, templatable {
      * @throws \dml_exception
      */
     public function __construct($grouping, $sort, $view, $paging, $customfieldvalue = null) {
+        global $CFG;
         // Get plugin config.
         $config = get_config('block_myoverview');
 
@@ -185,13 +186,25 @@ class main implements renderable, templatable {
         $this->customfieldvalue = $customfieldvalue;
 
         // Check and remember the given sorting.
-        $this->sort = $sort ? $sort : BLOCK_MYOVERVIEW_SORTING_TITLE;
+        if ($sort) {
+            $this->sort = $sort;
+        } else if ($CFG->courselistshortnames) {
+            $this->sort = BLOCK_MYOVERVIEW_SORTING_SHORTNAME;
+        } else {
+            $this->sort = BLOCK_MYOVERVIEW_SORTING_TITLE;
+        }
+        // In case sorting remembered is shortname and display extended course names not checked,
+        // we should revert sorting to title.
+        if (!$CFG->courselistshortnames && $sort == BLOCK_MYOVERVIEW_SORTING_SHORTNAME) {
+            $this->sort = BLOCK_MYOVERVIEW_SORTING_TITLE;
+        }
 
         // Check and remember the given view.
         $this->view = $view ? $view : BLOCK_MYOVERVIEW_VIEW_CARD;
 
-        // Check and remember the given page size.
-        if ($paging == BLOCK_MYOVERVIEW_PAGING_ALL) {
+        // Check and remember the given page size, `null` indicates no page size set
+        // while a `0` indicates a paging size of `All`.
+        if (!is_null($paging) && $paging == BLOCK_MYOVERVIEW_PAGING_ALL) {
             $this->paging = BLOCK_MYOVERVIEW_PAGING_ALL;
         } else {
             $this->paging = $paging ? $paging : BLOCK_MYOVERVIEW_PAGING_12;
@@ -236,7 +249,6 @@ class main implements renderable, templatable {
         }
         unset ($displaygroupingselectors, $displaygroupingselectorscount);
     }
-
     /**
      * Determine the most sensible fallback grouping to use (in cases where the stored selection
      * is no longer available).
@@ -359,8 +371,9 @@ class main implements renderable, templatable {
         $select = "instanceid $csql AND fieldid = :fieldid";
         $params['fieldid'] = $fieldid;
         $distinctablevalue = $DB->sql_compare_text('value');
-        $values = $DB->get_records_select_menu('customfield_data', $select, $params, $DB->sql_order_by_text('value'),
+        $values = $DB->get_records_select_menu('customfield_data', $select, $params, '',
             "DISTINCT $distinctablevalue, $distinctablevalue AS value2");
+        \core_collator::asort($values, \core_collator::SORT_NATURAL);
         $values = array_filter($values);
         if (!$values) {
             return [];
@@ -393,9 +406,15 @@ class main implements renderable, templatable {
      *
      */
     public function export_for_template(renderer_base $output) {
-        global $USER;
+        global $CFG, $USER;
 
         $nocoursesurl = $output->image_url('courses', 'block_myoverview')->out();
+
+        $newcourseurl = '';
+        $coursecat = \core_course_category::user_top();
+        if ($coursecat && ($category = \core_course_category::get_nearest_editable_subcategory($coursecat, ['create']))) {
+            $newcourseurl = new \moodle_url('/course/edit.php', ['category' => $category->id]);
+        }
 
         $customfieldvalues = $this->get_customfield_values_for_export();
         $selectedcustomfield = '';
@@ -422,12 +441,19 @@ class main implements renderable, templatable {
         }
         $preferences = $this->get_preferences_as_booleans();
         $availablelayouts = $this->get_formatted_available_layouts_for_export();
+        $sort = '';
+        if ($this->sort == BLOCK_MYOVERVIEW_SORTING_SHORTNAME) {
+            $sort = 'shortname';
+        } else {
+            $sort = $this->sort == BLOCK_MYOVERVIEW_SORTING_TITLE ? 'fullname' : 'ul.timeaccess desc';
+        }
 
         $defaultvariables = [
             'totalcoursecount' => count(enrol_get_all_users_courses($USER->id, true)),
             'nocoursesimg' => $nocoursesurl,
+            'newcourseurl' => $newcourseurl,
             'grouping' => $this->grouping,
-            'sort' => $this->sort == BLOCK_MYOVERVIEW_SORTING_TITLE ? 'fullname' : 'ul.timeaccess desc',
+            'sort' => $sort,
             // If the user preference display option is not available, default to first available layout.
             'view' => in_array($this->view, $this->layouts) ? $this->view : reset($this->layouts),
             'paging' => $this->paging,
@@ -447,6 +473,7 @@ class main implements renderable, templatable {
             'customfieldvalue' => $this->customfieldvalue,
             'customfieldvalues' => $customfieldvalues,
             'selectedcustomfield' => $selectedcustomfield,
+            'showsortbyshortname' => $CFG->courselistshortnames,
         ];
         return array_merge($defaultvariables, $preferences);
 

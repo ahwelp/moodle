@@ -89,7 +89,6 @@ if ($form->is_cancelled()) {
     raise_memory_limit(MEMORY_HUGE);
 
     $discussionvault = $vaultfactory->get_discussion_vault();
-    $postvault = $vaultfactory->get_post_vault();
     if ($data->discussionids) {
         $discussionids = $data->discussionids;
     } else if (empty($discussionids)) {
@@ -110,8 +109,13 @@ if ($form->is_cancelled()) {
         $filters['to'] = $data->to;
     }
 
-    // Retrieve posts based on the selected filters.
-    $posts = $postvault->get_from_filters($USER, $filters, $capabilitymanager->can_view_any_private_reply($USER));
+    // Retrieve posts based on the selected filters, note if forum has no discussions then there is nothing to export.
+    if (!empty($filters['discussionids'])) {
+        $postvault = $vaultfactory->get_post_vault();
+        $posts = $postvault->get_from_filters($USER, $filters, $capabilitymanager->can_view_any_private_reply($USER));
+    } else {
+        $posts = [];
+    }
 
     $striphtml = !empty($data->striphtml);
     $humandates = !empty($data->humandates);
@@ -120,7 +124,7 @@ if ($form->is_cancelled()) {
                 'messageformat', 'messagetrust', 'attachment', 'totalscore', 'mailnow', 'deleted', 'privatereplyto',
                 'privatereplytofullname', 'wordcount', 'charcount'];
 
-    $canviewfullname = has_capability('moodle/site:viewfullnames', $forum->get_context());
+    $canviewfullname = has_capability('moodle/site:viewfullnames', $context);
 
     $datamapper = $legacydatamapperfactory->get_post_data_mapper();
     $exportdata = new ArrayObject($datamapper->to_legacy_objects($posts));
@@ -132,7 +136,7 @@ if ($form->is_cancelled()) {
         $dataformat,
         $fields,
         $iterator,
-        function($exportdata) use ($fields, $striphtml, $humandates, $canviewfullname) {
+        function($exportdata) use ($fields, $striphtml, $humandates, $canviewfullname, $context) {
             $data = new stdClass();
 
             foreach ($fields as $field) {
@@ -149,6 +153,11 @@ if ($form->is_cancelled()) {
                     $data->privatereplytofullname = fullname($user, $canviewfullname);
                 }
 
+                if ($field == 'message') {
+                    $data->message = file_rewrite_pluginfile_urls($data->message, 'pluginfile.php', $context->id, 'mod_forum',
+                        'post', $data->id);
+                }
+
                 // Convert any boolean fields to their integer equivalent for output.
                 if (is_bool($data->$field)) {
                     $data->$field = (int) $data->$field;
@@ -156,11 +165,6 @@ if ($form->is_cancelled()) {
             }
 
             if ($striphtml) {
-                // The following call to html_to_text uses the option that strips out
-                // all URLs, but format_text complains if it finds @@PLUGINFILE@@ tokens.
-                // So, we need to replace @@PLUGINFILE@@ with a real URL, but it doesn't
-                // matter what. We use http://example.com/.
-                $data->message = str_replace('@@PLUGINFILE@@/', 'http://example.com/', $data->message);
                 $data->message = html_to_text(format_text($data->message, $data->messageformat), 0, false);
                 $data->messageformat = FORMAT_PLAIN;
             }
@@ -177,10 +181,14 @@ $PAGE->set_context($context);
 $PAGE->set_url($url);
 $PAGE->set_title($pagetitle);
 $PAGE->set_pagelayout('admin');
+$PAGE->add_body_class('limitedwidth');
 $PAGE->set_heading($pagetitle);
+$PAGE->activityheader->disable();
 
 echo $OUTPUT->header();
-echo $OUTPUT->heading($pagetitle);
+if (!$PAGE->has_secondary_navigation()) {
+    echo $OUTPUT->heading($pagetitle);
+}
 
 // It is possible that the following fields have been provided in the URL.
 $form->set_data(['useridsselected' => $userids, 'discussionids' => $discussionids, 'from' => $from, 'to' => $to]);

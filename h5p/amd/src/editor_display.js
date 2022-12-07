@@ -17,7 +17,6 @@
  * This module handles the display of the H5P authoring tool.
  *
  * @module     core_h5p/editor_display
- * @package    core_h5p
  * @copyright  2020 Victor Deniz <victor@moodle.com>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
@@ -59,4 +58,5 @@ export const init = (elementId) => {
         inputname,
         cancelSubmitCallback
     );
+    document.querySelector('#' + elementId + ' iframe').setAttribute('name', 'h5p-editor');
 };

@@ -79,8 +79,11 @@ class mod_lti_mod_form extends moodleform_mod {
         $this->typeid = 0;
 
         $mform =& $this->_form;
+
         // Adding the "general" fieldset, where all the common settings are shown.
+        $mform->addElement('html', "<div data-attribute='dynamic-import' hidden aria-hidden='true' role='alert'></div>");
         $mform->addElement('header', 'general', get_string('general', 'form'));
+
         // Adding the standard "name" field.
         $mform->addElement('text', 'name', get_string('basicltiname', 'lti'), array('size' => '64'));
         $mform->setType('name', PARAM_TEXT);
@@ -101,12 +104,12 @@ class mod_lti_mod_form extends moodleform_mod {
 
         $mform->setAdvanced('showdescription');
 
-        $mform->addElement('checkbox', 'showtitlelaunch', '&nbsp;', ' ' . get_string('display_name', 'lti'));
+        $mform->addElement('checkbox', 'showtitlelaunch', get_string('display_name', 'lti'));
         $mform->setAdvanced('showtitlelaunch');
         $mform->setDefault('showtitlelaunch', true);
         $mform->addHelpButton('showtitlelaunch', 'display_name', 'lti');
 
-        $mform->addElement('checkbox', 'showdescriptionlaunch', '&nbsp;', ' ' . get_string('display_description', 'lti'));
+        $mform->addElement('checkbox', 'showdescriptionlaunch', get_string('display_description', 'lti'));
         $mform->setAdvanced('showdescriptionlaunch');
         $mform->addHelpButton('showdescriptionlaunch', 'display_description', 'lti');
 
@@ -212,6 +215,18 @@ class mod_lti_mod_form extends moodleform_mod {
         $mform->addElement('hidden', 'urlmatchedtypeid', '', array('id' => 'id_urlmatchedtypeid'));
         $mform->setType('urlmatchedtypeid', PARAM_INT);
 
+        $mform->addElement('hidden', 'lineitemresourceid', '', array( 'id' => 'id_lineitemresourceid' ));
+        $mform->setType('lineitemresourceid', PARAM_TEXT);
+
+        $mform->addElement('hidden', 'lineitemtag', '', array( 'id' => 'id_lineitemtag'));
+        $mform->setType('lineitemtag', PARAM_TEXT);
+
+        $mform->addElement('hidden', 'lineitemsubreviewurl', '', array( 'id' => 'id_lineitemsubreviewurl'));
+        $mform->setType('lineitemsubreviewurl', PARAM_URL);
+
+        $mform->addElement('hidden', 'lineitemsubreviewparams', '', array( 'id' => 'id_lineitemsubreviewparams'));
+        $mform->setType('lineitemsubreviewparams', PARAM_TEXT);
+
         $launchoptions = array();
         $launchoptions[LTI_LAUNCH_CONTAINER_DEFAULT] = get_string('default', 'lti');
         $launchoptions[LTI_LAUNCH_CONTAINER_EMBED] = get_string('embed', 'lti');
@@ -272,17 +287,17 @@ class mod_lti_mod_form extends moodleform_mod {
         // Add privacy preferences fieldset where users choose whether to send their data.
         $mform->addElement('header', 'privacy', get_string('privacy', 'lti'));
 
-        $mform->addElement('advcheckbox', 'instructorchoicesendname', '&nbsp;', ' ' . get_string('share_name', 'lti'));
+        $mform->addElement('advcheckbox', 'instructorchoicesendname', get_string('share_name', 'lti'));
         $mform->setDefault('instructorchoicesendname', '1');
         $mform->addHelpButton('instructorchoicesendname', 'share_name', 'lti');
         $mform->disabledIf('instructorchoicesendname', 'typeid', 'in', $toolproxy);
 
-        $mform->addElement('advcheckbox', 'instructorchoicesendemailaddr', '&nbsp;', ' ' . get_string('share_email', 'lti'));
+        $mform->addElement('advcheckbox', 'instructorchoicesendemailaddr', get_string('share_email', 'lti'));
         $mform->setDefault('instructorchoicesendemailaddr', '1');
         $mform->addHelpButton('instructorchoicesendemailaddr', 'share_email', 'lti');
         $mform->disabledIf('instructorchoicesendemailaddr', 'typeid', 'in', $toolproxy);
 
-        $mform->addElement('advcheckbox', 'instructorchoiceacceptgrades', '&nbsp;', ' ' . get_string('accept_grades', 'lti'));
+        $mform->addElement('advcheckbox', 'instructorchoiceacceptgrades', get_string('accept_grades', 'lti'));
         $mform->setDefault('instructorchoiceacceptgrades', '1');
         $mform->addHelpButton('instructorchoiceacceptgrades', 'accept_grades', 'lti');
         $mform->disabledIf('instructorchoiceacceptgrades', 'typeid', 'in', $toolproxy);
@@ -348,4 +363,18 @@ class mod_lti_mod_form extends moodleform_mod {
         $PAGE->requires->js_init_call('M.mod_lti.editor.init', array(json_encode($jsinfo)), true, $module);
     }
 
+    /**
+     * Sets the current values handled by services in case of update.
+     *
+     * @param object $defaultvalues default values to populate the form with.
+     */
+    public function set_data($defaultvalues) {
+        $services = lti_get_services();
+        if (is_object($defaultvalues)) {
+            foreach ($services as $service) {
+                $service->set_instance_form_values( $defaultvalues );
+            }
+        }
+        parent::set_data($defaultvalues);
+    }
 }

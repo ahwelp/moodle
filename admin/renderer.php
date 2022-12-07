@@ -15,19 +15,12 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Renderer for core_admin subsystem
+ * Standard HTML output renderer for core_admin subsystem.
  *
  * @package    core
  * @subpackage admin
  * @copyright  2011 David Mudrak <david@moodle.com>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
- */
-
-defined('MOODLE_INTERNAL') || die();
-
-
-/**
- * Standard HTML output renderer for core_admin subsystem
  */
 class core_admin_renderer extends plugin_renderer_base {
 
@@ -220,7 +213,7 @@ class core_admin_renderer extends plugin_renderer_base {
             $output .= $this->container_end();
         }
 
-        $button = new single_button($continueurl, get_string('upgradestart', 'admin'), 'get');
+        $button = new single_button($continueurl, get_string('upgradestart', 'admin'), 'get', true);
         $button->class = 'continuebutton';
         $output .= $this->render($button);
         $output .= $this->footer();
@@ -282,6 +275,10 @@ class core_admin_renderer extends plugin_renderer_base {
      * @param bool $overridetossl Whether or not ssl is being forced.
      * @param bool $invalidforgottenpasswordurl Whether the forgotten password URL does not link to a valid URL.
      * @param bool $croninfrequent If true, warn that cron hasn't run in the past few minutes
+     * @param bool $showcampaigncontent Whether the campaign content should be visible or not.
+     * @param bool $showfeedbackencouragement Whether the feedback encouragement content should be displayed or not.
+     * @param bool $showservicesandsupport Whether the services and support content should be displayed or not.
+     * @param string $xmlrpcwarning XML-RPC deprecation warning message.
      *
      * @return string HTML to output.
      */
@@ -289,11 +286,15 @@ class core_admin_renderer extends plugin_renderer_base {
             $cronoverdue, $dbproblems, $maintenancemode, $availableupdates, $availableupdatesfetch,
             $buggyiconvnomb, $registered, array $cachewarnings = array(), $eventshandlers = 0,
             $themedesignermode = false, $devlibdir = false, $mobileconfigured = false,
-            $overridetossl = false, $invalidforgottenpasswordurl = false, $croninfrequent = false) {
+            $overridetossl = false, $invalidforgottenpasswordurl = false, $croninfrequent = false,
+            $showcampaigncontent = false, bool $showfeedbackencouragement = false, bool $showservicesandsupport = false,
+            $xmlrpcwarning = '') {
+
         global $CFG;
         $output = '';
 
         $output .= $this->header();
+        $output .= $this->output->heading(get_string('notifications', 'admin'));
         $output .= $this->maturity_info($maturity);
         $output .= $this->legacy_log_store_writing_error();
         $output .= empty($CFG->disableupdatenotifications) ? $this->available_updates($availableupdates, $availableupdatesfetch) : '';
@@ -312,6 +313,10 @@ class core_admin_renderer extends plugin_renderer_base {
         $output .= $this->registration_warning($registered);
         $output .= $this->mobile_configuration_warning($mobileconfigured);
         $output .= $this->forgotten_password_url_warning($invalidforgottenpasswordurl);
+        $output .= $this->mnet_deprecation_warning($xmlrpcwarning);
+        $output .= $this->userfeedback_encouragement($showfeedbackencouragement);
+        $output .= $this->services_and_support_content($showservicesandsupport);
+        $output .= $this->campaign_content($showcampaigncontent);
 
         //////////////////////////////////////////////////////////////////////////////////////////////////
         ////  IT IS ILLEGAL AND A VIOLATION OF THE GPL TO HIDE, REMOVE OR MODIFY THIS COPYRIGHT NOTICE ///
@@ -879,6 +884,48 @@ class core_admin_renderer extends plugin_renderer_base {
     }
 
     /**
+     * Display campaign content.
+     *
+     * @param bool $showcampaigncontent Whether the campaign content should be visible or not.
+     * @return string the campaign content raw html.
+     */
+    protected function campaign_content(bool $showcampaigncontent): string {
+        if (!$showcampaigncontent) {
+            return '';
+        }
+
+        $lang = current_language();
+        $url = "https://campaign.moodle.org/current/lms/{$lang}/install/";
+        $params = [
+            'url' => $url,
+            'iframeid' => 'campaign-content'
+        ];
+
+        return $this->render_from_template('core/external_content_banner', $params);
+    }
+
+    /**
+     * Display services and support content.
+     *
+     * @param bool $showservicesandsupport Whether the services and support content should be visible or not.
+     * @return string the campaign content raw html.
+     */
+    protected function services_and_support_content(bool $showservicesandsupport): string {
+        if (!$showservicesandsupport) {
+            return '';
+        }
+
+        $lang = current_language();
+        $url = "https://campaign.moodle.org/current/lms/{$lang}/servicesandsupport/";
+        $params = [
+            'url' => $url,
+            'iframeid' => 'services-support-content'
+        ];
+
+        return $this->render_from_template('core/external_content_banner', $params);
+    }
+
+    /**
      * Display a warning about the forgotten password URL not linking to a valid URL.
      *
      * @param boolean $invalidforgottenpasswordurl true if the forgotten password URL is not valid
@@ -1033,12 +1080,21 @@ class core_admin_renderer extends plugin_renderer_base {
             $plugintyperows = array();
 
             foreach ($plugins as $name => $plugin) {
+                $component = "{$plugin->type}_{$plugin->name}";
+
                 $sumtotal++;
                 $row = new html_table_row();
-                $row->attributes['class'] = 'type-' . $plugin->type . ' name-' . $plugin->type . '_' . $plugin->name;
+                $row->attributes['class'] = "type-{$plugin->type} name-{$component}";
 
-                if ($this->page->theme->resolve_image_location('icon', $plugin->type . '_' . $plugin->name, null)) {
-                    $icon = $this->output->pix_icon('icon', '', $plugin->type . '_' . $plugin->name, array('class' => 'smallicon pluginicon'));
+                $iconidentifier = 'icon';
+                if ($plugin->type === 'mod') {
+                    $iconidentifier = 'monologo';
+                }
+
+                if ($this->page->theme->resolve_image_location($iconidentifier, $component, null)) {
+                    $icon = $this->output->pix_icon($iconidentifier, '', $component, [
+                        'class' => 'smallicon pluginicon',
+                    ]);
                 } else {
                     $icon = '';
                 }
@@ -1090,7 +1146,7 @@ class core_admin_renderer extends plugin_renderer_base {
 
                 if (!empty($installabortable[$plugin->component])) {
                     $status .= $this->output->single_button(
-                        new moodle_url($this->page->url, array('abortinstall' => $plugin->component)),
+                        new moodle_url($this->page->url, array('abortinstall' => $plugin->component, 'confirmplugincheck' => 0)),
                         get_string('cancelinstallone', 'core_plugin'),
                         'post',
                         array('class' => 'actionbutton cancelinstallone d-block mt-1')
@@ -1189,7 +1245,7 @@ class core_admin_renderer extends plugin_renderer_base {
 
         if ($installabortable) {
             $out .= $this->output->single_button(
-                new moodle_url($this->page->url, array('abortinstallx' => 1)),
+                new moodle_url($this->page->url, array('abortinstallx' => 1, 'confirmplugincheck' => 0)),
                 get_string('cancelinstallall', 'core_plugin', count($installabortable)),
                 'post',
                 array('class' => 'singlebutton cancelinstallall mr-1')
@@ -1596,12 +1652,18 @@ class core_admin_renderer extends plugin_renderer_base {
 
         $plugininfo = $pluginman->get_plugins();
 
-        $numtotal = $numextension = $numupdatable = 0;
+        $numtotal = $numextension = $numupdatable = $numinstallable = 0;
 
         foreach ($plugininfo as $type => $plugins) {
             foreach ($plugins as $name => $plugin) {
-                if ($plugin->available_updates()) {
+                if ($res = $plugin->available_updates()) {
                     $numupdatable++;
+                    foreach ($res as $updateinfo) {
+                        if ($pluginman->is_remote_plugin_installable($updateinfo->component, $updateinfo->version, $reason, false)) {
+                            $numinstallable++;
+                            break;
+                        }
+                    }
                 }
                 if ($plugin->get_status() === core_plugin_manager::PLUGIN_STATUS_MISSING) {
                     continue;
@@ -1644,16 +1706,13 @@ class core_admin_renderer extends plugin_renderer_base {
             $out .= $this->output->heading(get_string('overviewext', 'core_plugin'), 3);
         }
 
-        if ($numupdatable) {
-            $installableupdates = $pluginman->filter_installable($pluginman->available_updates());
-            if ($installableupdates) {
-                $out .= $this->output->single_button(
-                    new moodle_url($this->page->url, array('installupdatex' => 1)),
-                    get_string('updateavailableinstallall', 'core_admin', count($installableupdates)),
-                    'post',
-                    array('class' => 'singlebutton updateavailableinstallall')
-                );
-            }
+        if ($numinstallable) {
+            $out .= $this->output->single_button(
+                new moodle_url($this->page->url, array('installupdatex' => 1)),
+                get_string('updateavailableinstallall', 'core_admin', $numinstallable),
+                'post',
+                array('class' => 'singlebutton updateavailableinstallall')
+            );
         }
 
         $out .= html_writer::div($infoall, 'info info-all').
@@ -1748,11 +1807,20 @@ class core_admin_renderer extends plugin_renderer_base {
             }
 
             foreach ($plugins as $name => $plugin) {
-                $row = new html_table_row();
-                $row->attributes['class'] = 'type-' . $plugin->type . ' name-' . $plugin->type . '_' . $plugin->name;
+                $component = "{$plugin->type}_{$plugin->name}";
 
-                if ($this->page->theme->resolve_image_location('icon', $plugin->type . '_' . $plugin->name, null)) {
-                    $icon = $this->output->pix_icon('icon', '', $plugin->type . '_' . $plugin->name, array('class' => 'icon pluginicon'));
+                $row = new html_table_row();
+                $row->attributes['class'] = "type-{$plugin->type} name-{$component}";
+
+                $iconidentifier = 'icon';
+                if ($plugin->type === 'mod') {
+                    $iconidentifier = 'monologo';
+                }
+
+                if ($this->page->theme->resolve_image_location($iconidentifier, $component, null)) {
+                    $icon = $this->output->pix_icon($iconidentifier, '', $component, [
+                        'class' => 'icon pluginicon',
+                    ]);
                 } else {
                     $icon = $this->output->spacer();
                 }
@@ -1887,7 +1955,7 @@ class core_admin_renderer extends plugin_renderer_base {
             'infos'
         );
 
-        if ($pluginman->is_remote_plugin_installable($updateinfo->component, $updateinfo->version, $reason)) {
+        if ($pluginman->is_remote_plugin_installable($updateinfo->component, $updateinfo->version, $reason, false)) {
             $box .= $this->output->single_button(
                 new moodle_url($this->page->url, array('installupdate' => $updateinfo->component,
                     'installupdateversion' => $updateinfo->version)),
@@ -2012,7 +2080,7 @@ class core_admin_renderer extends plugin_renderer_base {
                         $errorline = true;
                     } else {
                         if ($status) {                                          //Handle ok result (ok)
-                            $status = get_string('ok');
+                            $status = get_string('statusok');
                         } else {
                             if ($environment_result->getLevel() == 'optional') {//Handle check result (warning)
                                 $status = get_string('check');
@@ -2107,8 +2175,16 @@ class core_admin_renderer extends plugin_renderer_base {
         $output .= $this->container_start('upgradekeyreq');
         $output .= $this->heading(get_string('upgradekeyreq', 'core_admin'));
         $output .= html_writer::start_tag('form', array('method' => 'POST', 'action' => $url));
-        $output .= html_writer::empty_tag('input', array('name' => 'upgradekey', 'type' => 'password'));
-        $output .= html_writer::empty_tag('input', array('value' => get_string('submit'), 'type' => 'submit'));
+        $output .= html_writer::empty_tag('input', [
+            'name' => 'upgradekey',
+            'type' => 'password',
+            'class' => 'form-control w-auto',
+        ]);
+        $output .= html_writer::empty_tag('input', [
+            'type' => 'submit',
+            'value' => get_string('submit'),
+            'class' => 'btn btn-primary mt-3',
+        ]);
         $output .= html_writer::end_tag('form');
         $output .= $this->container_end();
         $output .= $this->footer();
@@ -2159,5 +2235,36 @@ class core_admin_renderer extends plugin_renderer_base {
         );
 
         return $this->output->box($out);
+    }
+
+    /**
+     * Display message about benefits of enabling the user feedback feature.
+     *
+     * @param bool $showfeedbackencouragement Whether the encouragement content should be displayed or not
+     * @return string
+     */
+    protected function userfeedback_encouragement(bool $showfeedbackencouragement): string {
+        $output = '';
+
+        if ($showfeedbackencouragement) {
+            $settingslink = new moodle_url('/admin/settings.php', ['section' => 'userfeedback']);
+            $output .= $this->warning(get_string('userfeedbackencouragement', 'admin', $settingslink->out()), 'info');
+        }
+
+        return $output;
+    }
+
+    /**
+     * Display a warning about the deprecation of Mnet.
+     *
+     * @param string $xmlrpcwarning The warning message
+     * @return string HTML to output.
+     */
+    protected function mnet_deprecation_warning($xmlrpcwarning) {
+        if (empty($xmlrpcwarning)) {
+            return '';
+        }
+
+        return $this->warning($xmlrpcwarning);
     }
 }

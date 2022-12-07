@@ -23,6 +23,9 @@
  */
 
 $string['countparticipantsfound'] = '{$a} participants found';
+$string['moodlenetprofile'] = 'MoodleNet profile ID';
+$string['moodlenetprofile_help'] = 'Your MoodleNet profile ID links your MoodleNet profile with this site.';
+$string['placeholdertype'] = 'Type...';
 $string['privacy:courserequestpath'] = 'Requested courses';
 $string['privacy:descriptionpath'] = 'Profile description';
 $string['privacy:devicespath'] = 'User devices';
@@ -75,6 +78,7 @@ $string['privacy:metadata:maildisplay'] = 'A preference for the user about displ
 $string['privacy:metadata:middlename'] = 'The middle name of the user';
 $string['privacy:metadata:mnethostid'] = 'An identifier for the MNet host if used';
 $string['privacy:metadata:model'] = 'The device name, occam or iPhone etc..';
+$string['privacy:metadata:moodlenetprofile'] = 'The MoodleNet profile for the user';
 $string['privacy:metadata:msn'] = 'The MSN identifier of the user';
 $string['privacy:metadata:my_pages'] = 'User pages - dashboard and profile. This table does not contain personal data and only used to link dashboard blocks to users';
 $string['privacy:metadata:my_pages:name'] = 'Page name';
@@ -92,6 +96,7 @@ $string['privacy:metadata:reason'] = 'The reason for requesting this course.';
 $string['privacy:metadata:requester'] = 'The ID of the user who requested the course';
 $string['privacy:metadata:requestsummary'] = 'Stores information about requests for courses that users make.';
 $string['privacy:metadata:suspended'] = 'A flag to show if the user has been suspended on this system.';
+$string['privacy:metadata:user_preference:core_user_welcome'] = 'Timestamp logged for when the welcome message was shown to the user for the first time.';
 $string['privacy:metadata:user_preferences'] = 'Preferences associated with the given user';
 $string['privacy:metadata:user_preferences:name'] = 'Preference name';
 $string['privacy:metadata:user_preferences:userid'] = 'The user ID';
@@ -126,6 +131,28 @@ $string['privacy:passwordresetpath'] = 'Password resets';
 $string['privacy:profileimagespath'] = 'Profile images';
 $string['privacy:privatefilespath'] = 'Private files';
 $string['privacy:sessionpath'] = 'Session data';
+$string['filterbykeyword'] = 'Keyword';
+$string['supportmessagesent'] = 'Your message has been sent.';
+$string['supportmessagesentforloggedoutuser'] = 'Be careful with this message. The sender was not logged in, so their identity has not been confirmed.';
+$string['supportmessagenotsent'] = "Unfortunately your message could not be sent.";
+$string['supportmessagealternative'] = 'Instead you can email {$a}.';
 $string['target:upcomingactivitiesdue'] = 'Upcoming activities due';
 $string['target:upcomingactivitiesdue_help'] = 'This target generates reminders for upcoming activities due.';
 $string['target:upcomingactivitiesdueinfo'] = 'All upcoming activities due insights are listed here. These students have received these insights directly.';
+
+// Deprecated since Moodle 4.1.
+$string['addcondition'] = 'Add condition';
+$string['adverbfor_and'] = 'and';
+$string['adverbfor_andnot'] = 'and';
+$string['adverbfor_or'] = 'or';
+$string['applyfilters'] = 'Apply filters';
+$string['clearfilterrow'] = 'Remove filter row';
+$string['clearfilters'] = 'Clear filters';
+$string['filtersetmatchdescription'] = 'How multiple filters should be combined';
+$string['filterrowlegend'] = 'Filter {$a}';
+$string['filtertype'] = 'Filter type';
+$string['match'] = 'Match';
+$string['matchofthefollowing'] = 'of the following:';
+$string['selectfiltertype'] = 'Select';
+$string['placeholdertypeorselect'] = 'Type or select...';
+$string['clearfilterselection'] = 'Remove "{$a}" from filter';
